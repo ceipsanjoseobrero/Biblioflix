@@ -2343,22 +2343,27 @@ updateStudentBadge();
 const SHEETS_URL = '';  // ← Pega aquí la URL CSV de tu Google Sheet
 
 async function loadSheetsRecommendation(){
-  if(!SHEETS_URL) return;
+  const url = localStorage.getItem('biblioflix_sheets_url') || SHEETS_URL;
+  if(!url) return;
   try{
-    const r = await fetch(SHEETS_URL + '&t=' + Date.now());
+    const r = await fetch(url + (url.includes('?')?'&':'?') + 't=' + Date.now());
     if(!r.ok) return;
     const csv = await r.text();
     const rows = csv.split('\n').slice(1).filter(l=>l.trim());
     if(!rows.length) return;
     const cols = rows[0].split(',').map(c=>c.replace(/^"|"$/g,'').trim());
-    const [titulo='', autor='', texto=''] = cols;
+    const titulo = cols[0]||'';
+    const texto  = cols[2]||cols[1]||cols[0]||'';
     if(texto){
-      ST.teacherRec = texto;
-      if(titulo) ST.teacherRecBook = titulo;
+      ST.teacherRec = {text: texto, bookId: null, grade: 'all'};
+      if(titulo){
+        const found = BOOKS.find(b=>b.title.toLowerCase().includes(titulo.toLowerCase().slice(0,15)));
+        if(found) ST.teacherRec.bookId = found.id;
+      }
       saveState();
-      setTeacherCard(currentGrade);
+      if(currentGrade) setTeacherCard(currentGrade);
     }
-  } catch(e){ /* falla silenciosamente si sin red */ }
+  } catch(e){ /* falla silenciosamente */ }
 }
 loadSheetsRecommendation();
 
@@ -2366,14 +2371,11 @@ function saveSheetsUrl(){
   const url = document.getElementById('sheetsUrlInput')?.value.trim();
   const status = document.getElementById('sheetsStatus');
   if(!url){ if(status) status.innerHTML='<span style="color:#ff8080">⚠️ Introduce una URL primero.</span>'; return; }
-  if(!url.includes('docs.google.com') && !url.includes('output=csv')){
-    if(status) status.innerHTML='<span style="color:#ff8080">⚠️ La URL no parece ser de Google Sheets en formato CSV.</span>';
+  if(!url.includes('docs.google.com')){
+    if(status) status.innerHTML='<span style="color:#ff8080">⚠️ La URL no parece ser de Google Sheets.</span>';
     return;
   }
-  // Guardar en localStorage para persistir
   localStorage.setItem('biblioflix_sheets_url', url);
-  // Aplicar sin recargar
-  window.SHEETS_URL_LIVE = url;
   if(status) status.innerHTML='<span style="color:#22c55e">✅ URL guardada. Probando conexión…</span>';
   testSheetsUrl();
 }
@@ -2385,25 +2387,37 @@ async function testSheetsUrl(){
   if(!url){ if(status) status.innerHTML='<span style="color:#ff8080">⚠️ No hay URL configurada.</span>'; return; }
   try{
     if(status) status.innerHTML='<span style="color:#888">🔄 Conectando con Google Sheets…</span>';
-    const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now());
+    const r = await fetch(url + (url.includes('?')?'&':'?') + 't=' + Date.now());
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const csv = await r.text();
     const rows = csv.split('\n').slice(1).filter(l=>l.trim());
-    if(!rows.length) throw new Error('La hoja está vacía');
+    if(!rows.length) throw new Error('La hoja está vacía — añade datos en la fila 2');
     const cols = rows[0].split(',').map(c=>c.replace(/^"|"$/g,'').trim());
-    const texto = cols[2] || cols[1] || cols[0];
-    if(status) status.innerHTML=`<span style="color:#22c55e">✅ Conexión correcta. Texto recibido: <em style="color:#ccc">"${texto.slice(0,60)}…"</em></span>`;
-    // Aplicar la recomendación
-    if(texto){ ST.teacherRec=texto; if(cols[0]) ST.teacherRecBook=cols[0]; saveState(); setTeacherCard(currentGrade); }
+    const titulo = cols[0]||'';
+    const texto  = cols[2]||cols[1]||cols[0]||'';
+    if(!texto) throw new Error('La celda C2 (Recomendacion) está vacía');
+
+    // Guardar correctamente como objeto {text, bookId, grade}
+    ST.teacherRec = {text: texto, bookId: null, grade: 'all'};
+    if(titulo){
+      const found = BOOKS.find(b=>b.title.toLowerCase().includes(titulo.toLowerCase().slice(0,15)));
+      if(found) ST.teacherRec.bookId = found.id;
+    }
+    saveState();
+
+    // Actualizar la tarjeta si el dashboard está visible
+    if(currentGrade) setTeacherCard(currentGrade);
+
+    if(status) status.innerHTML=`<span style="color:#22c55e">✅ Conexión correcta. Recomendación guardada: <em style="color:#ccc">"${texto.slice(0,60)}…"</em></span><br><span style="color:#888;font-size:.75rem">La tarjeta del maestro se actualizará la próxima vez que entres en un curso.</span>`;
   } catch(e){
-    if(status) status.innerHTML=`<span style="color:#ff8080">❌ Error: ${e.message}. Comprueba que la hoja está publicada en formato CSV.</span>`;
+    if(status) status.innerHTML=`<span style="color:#ff8080">❌ Error: ${e.message}.</span>`;
   }
 }
 
 // Restaurar URL guardada al cargar
 (function(){
   const saved = localStorage.getItem('biblioflix_sheets_url');
-  if(saved && !SHEETS_URL){ window.SHEETS_URL_LIVE=saved; }
+  if(saved){ const inp=document.getElementById('sheetsUrlInput'); if(inp) inp.value=saved; }
 })();
 
 /* ═══════════════════════════════════════════════════════
