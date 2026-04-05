@@ -1,24 +1,14 @@
-/* 📚 BASE DE DATOS DE BIBLIOFLIX
-   Aquí puedes añadir libros y organizar los ciclos.
-*/
-
+/* 📚 BASE DE DATOS DE BIBLIOFLIX */
 const CATALOGO_DOCENTE = {
-    novedades: [1, 2001, 1237], // Los que salen en el banner principal
-    itinerario: {
-        infantil: [], 
-        ciclo1: [],
-        ciclo2: [],
-        ciclo3: [], // Geronimo NO está aquí como pediste
-        eso: []
-    }
+    novedades: [1237, 2001, 2002], 
+    itinerario: { infantil: [], ciclo1: [], ciclo2: [], ciclo3: [], eso: [] }
 };
 
-// Esta función es el "molde" para tus libros
 function mkB(id, title, author, emoji, level, cover, genre, pub, isbn, c1, c2, syn, pages) {
     return { id, title, author, emoji, level, cover, genre, pub, isbn, c1, c2, syn, pages };
 }
 
-const BOOKS = [const BOOKS=[
+const BOOKS = [
 mkB(1001,"Porque eres especial","Alma Gross","📚","segundo",null,"Cuento","SM","9788418483967","#1a0030","#35006a","Punchinello es un muñeco de madera al que todo el mundo pega pegatinas: doradas si hace algo bien, grises si lo hace mal. Hasta que conoce a Eli y aprende que su valor no depende de lo que los demás piensen. Un cuento sobre la autoestima.",[["Capítulo I","Conocemos a Porque","📖","Punchinello es un muñeco de madera al que todo el mundo pega pegatinas: doradas si hace algo bien, grises si lo hace mal. Hasta que conoce a Eli y aprende que su valor no depende de lo que los demás piensen.\n\nY ese día todo cambió.",{q:"¿De qué trata principalmente Porque eres especial?",opts:["Punchinello es un muñeco de madera al que todo el mundo pega pegatinas: doradas ","De un viaje espacial sin ninguna complicación.","De una clase de matemáticas muy aburrida."],ok:0}],
 ["Capítulo II","Porque en apuros","🌟","Un cuento sobre la autoestima.\n\nY justo cuando todo parecía ir bien...",{q:"¿Qué problema tiene que resolver en Porque eres especial?",opts:["Punchinello es un muñeco de madera al que todo el mundo pega.","No tiene ningún problema","Solo quiere comer más"],ok:0}],
 ["Capítulo III","¿Qué hará Porque?","✨","Punchinello es un muñeco de madera al que todo el mundo pega pegatinas: doradas si hace algo bien, grises si lo hace mal. Hasta que conoce a Eli y aprende que su valor no depende de lo que los demás piensen. Un cuento sobre la autoestima.\n\n¿Lo conseguirá?\n\n📚 Visita la biblioteca del cole para conocer la historia completa.",null]]),
@@ -1583,8 +1573,7 @@ mkB(1521,"La esclavitud de nuestro tiempo","Autor desconocido","📚","eso",null
 ["Capítulo II","El problema real","🌟","Para lectores adultos.\n\nLeón comprendió entonces que lo que creía saber no era toda la verdad.",{q:"¿Qué hace especial a León frente a los demás personajes?",opts:["Su manera de ver el mundo y enfrentarse a los problemas","Que siempre tiene razón en todo","Que no tiene ninguna cualidad especial"],ok:0}],
 ["Capítulo III","Sin vuelta atrás","✨","León Tolstoi analiza el sistema de servidumbre y esclavitud que pervive en la sociedad moderna disfrazado de trabajo asalariado. Un ensayo político del autor de Guerra y Paz. Para lectores adultos.\n\nEste es solo el principio. La historia de verdad comienza ahora.\n\n📚 Visita la biblioteca del cole para conocer la historia completa.",null]])
 ];
-    // --- 1. PEGA AQUÍ TUS +400 LIBROS DEL ARCHIVO ORIGINAL ---
-    // (Busca en tu archivo viejo desde el primer mkB... hasta el último)
+
     
     // --- 2. COLECCIÓN GERONIMO STILTON (Para 5º y 6º) ---
     mkB(2001,"Mi nombre es Stilton, Geronimo Stilton","G. Stilton","🐭","quinto","https://m.media-amazon.com/images/I/91pms6n6S1L.jpg","Aventura","Destino","9788408086208","#1a0d3e","#2e1760","Geronimo dirige el Eco del Roedor.", [["Capítulo I","¡Qué lío!","📖","Todo empezó una mañana...", {q:"¿Qué dirige?", opts:["Un cine","Un periódico"], ok:1}]]),
