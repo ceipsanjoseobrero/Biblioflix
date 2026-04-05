@@ -737,7 +737,7 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
       <table class="admin-table" id="adminTable">
         <thead><tr>
           <th></th><th>Título</th><th>Autor</th><th>Nivel</th><th>Género</th>
-          <th>Lecturas</th><th>Destacar</th>
+          <th>Lecturas</th><th>Destacar</th><th>Enviar a…</th>
         </tr></thead>
         <tbody id="adminTableBody"></tbody>
       </table>
@@ -3197,6 +3197,9 @@ function buildAdminTable(books, q){
   tbody.innerHTML=filtered.map(b=>{
     const reads=ST.reads[b.id]||0;
     const isPinned=ST.adminPinned.find(p=>p.id===b.id);
+    // ¿ya está en novedades o itinerario?
+    const enNov = (ST.novedades||[]).some(n=>n.title===b.title);
+    const enItin = Object.values(ST.itinerario||{}).some(arr=>arr.some(l=>l.titulo===b.title));
     return `<tr>
       <td class="tbl-emoji">${b.emoji}</td>
       <td><b>${b.title}</b>${b.badge?`<span class="tbl-badge">${b.badge}</span>`:''}</td>
@@ -3205,6 +3208,16 @@ function buildAdminTable(books, q){
       <td style="color:var(--g)">${b.genre}</td>
       <td style="font-weight:900;color:${reads>0?'#86efac':'var(--g)'}">${reads}</td>
       <td><button onclick="togglePin(${b.id})" style="background:${isPinned?'var(--gold)':'rgba(255,255,255,.08)'};color:${isPinned?'#000':'var(--g)'};border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-weight:800;font-size:.72rem">${isPinned?'★ Destacado':'☆ Destacar'}</button></td>
+      <td style="white-space:nowrap">
+        <button onclick="addLibroANovedades(${b.id})" title="Añadir a Novedades"
+          style="background:${enNov?'rgba(190,18,60,.3)':'rgba(190,18,60,.12)'};color:${enNov?'#fb7185':'#f87171'};border:1px solid rgba(190,18,60,.3);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:.68rem;font-weight:800;margin-right:4px">
+          ${enNov?'✓ Nov':'🆕 Nov'}
+        </button>
+        <button onclick="addLibroAItinerario(${b.id})" title="Añadir a Itinerario Lector"
+          style="background:${enItin?'rgba(5,150,105,.3)':'rgba(5,150,105,.12)'};color:${enItin?'#34d399':'#6ee7b7'};border:1px solid rgba(5,150,105,.3);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:.68rem;font-weight:800">
+          ${enItin?'✓ Itin':'🗺 Itin'}
+        </button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -3217,6 +3230,113 @@ function togglePin(id){
   else { ST.adminPinned.splice(i,1); }
   saveState();
   buildAdminTable(BOOKS, document.getElementById('adminSearch').value);
+}
+
+function addLibroANovedades(id){
+  const b = BOOKS.find(x=>x.id===id);
+  if(!b) return;
+  if(!ST.novedades) ST.novedades = [];
+  // Si ya está, quitarlo (toggle)
+  const idx = ST.novedades.findIndex(n=>n.title===b.title);
+  if(idx > -1){
+    ST.novedades.splice(idx, 1);
+    saveState();
+    buildAdminTable(BOOKS, document.getElementById('adminSearch').value);
+    return;
+  }
+  ST.novedades.push({
+    title: b.title,
+    author: b.author,
+    emoji: b.emoji,
+    genre: b.genre,
+    synopsis: b.synopsis,
+    targetCat: b.cat,
+    addedDate: new Date().toLocaleDateString('es-ES')
+  });
+  saveState();
+  buildAdminTable(BOOKS, document.getElementById('adminSearch').value);
+  // Toast de confirmación
+  _adminToast('🆕 «'+b.title.slice(0,30)+'» añadido a Novedades');
+}
+
+// Ciclos del itinerario para el modal de selección
+const _CICLO_NOMBRES = {1:'📗 1º Ciclo (Infantil/1º-2º)', 2:'📘 2º Ciclo (3º-4º)', 3:'📙 3º Ciclo (5º-6º)', 4:'📕 ESO'};
+
+function addLibroAItinerario(id){
+  const b = BOOKS.find(x=>x.id===id);
+  if(!b) return;
+
+  // Si ya está en algún ciclo, preguntar si quitarlo
+  if(!ST.itinerario) ST.itinerario = JSON.parse(JSON.stringify(ITINERARIO_DEFAULT));
+  for(const [ciclo, libros] of Object.entries(ST.itinerario)){
+    const idx = libros.findIndex(l=>l.titulo===b.title);
+    if(idx > -1){
+      if(confirm('«'+b.title.slice(0,40)+'» ya está en el Itinerario ('+_CICLO_NOMBRES[ciclo]+'). ¿Quieres quitarlo?')){
+        libros.splice(idx,1);
+        saveState();
+        buildAdminTable(BOOKS, document.getElementById('adminSearch').value);
+        _adminToast('🗑 Quitado del Itinerario');
+      }
+      return;
+    }
+  }
+
+  // Mostrar mini-modal para elegir ciclo
+  _mostrarSelectorCiclo(b);
+}
+
+function _mostrarSelectorCiclo(b){
+  // Crear overlay de selección de ciclo
+  let overlay = document.getElementById('cicloSelectorOverlay');
+  if(overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'cicloSelectorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:600;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:#1a1a1a;border:1px solid rgba(52,211,153,.3);border-radius:16px;padding:28px 32px;max-width:360px;width:100%;text-align:center">
+      <div style="font-size:1.6rem;margin-bottom:6px">${b.emoji}</div>
+      <div style="font-weight:900;margin-bottom:4px;font-size:.95rem">${b.title.slice(0,40)}</div>
+      <div style="color:var(--g);font-size:.8rem;margin-bottom:20px">¿A qué ciclo del Itinerario Lector lo añadimos?</div>
+      <div style="display:grid;gap:8px;">
+        ${Object.entries(_CICLO_NOMBRES).map(([c,n])=>`
+          <button onclick="_confirmarCiclo(${b.id},${c})"
+            style="background:rgba(52,211,153,.1);border:1.5px solid rgba(52,211,153,.3);color:#34d399;
+                   padding:10px 16px;border-radius:8px;font-family:var(--B);font-weight:800;font-size:.85rem;cursor:pointer;text-align:left">
+            ${n}
+          </button>`).join('')}
+        <button onclick="document.getElementById('cicloSelectorOverlay').remove()"
+          style="background:transparent;border:1px solid #444;color:#666;padding:8px;border-radius:8px;cursor:pointer;font-size:.82rem;margin-top:4px">
+          Cancelar
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function _confirmarCiclo(bookId, ciclo){
+  const b = BOOKS.find(x=>x.id===bookId);
+  if(!b) return;
+  if(!ST.itinerario) ST.itinerario = JSON.parse(JSON.stringify(ITINERARIO_DEFAULT));
+  if(!ST.itinerario[ciclo]) ST.itinerario[ciclo] = [];
+  ST.itinerario[ciclo].push({titulo: b.title, autor: b.author});
+  saveState();
+  document.getElementById('cicloSelectorOverlay')?.remove();
+  buildAdminTable(BOOKS, document.getElementById('adminSearch').value);
+  _adminToast('🗺 «'+b.title.slice(0,30)+'» añadido al '+_CICLO_NOMBRES[ciclo]);
+}
+
+function _adminToast(msg){
+  let t = document.getElementById('adminToast');
+  if(!t){
+    t = document.createElement('div');
+    t.id = 'adminToast';
+    t.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1a2a1a;border:1px solid rgba(52,211,153,.4);color:#34d399;padding:10px 22px;border-radius:10px;font-size:.84rem;font-weight:700;z-index:700;pointer-events:none;transition:opacity .3s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=>{ t.style.opacity='0'; }, 2800);
 }
 
 /* RECOMENDACIÓN */
