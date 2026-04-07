@@ -94,6 +94,20 @@ nav.solid{background:rgba(15,15,15,.97);backdrop-filter:blur(8px);}
 .nav-search{background:transparent;border:1.5px solid #555;color:var(--w);padding:5px 14px;border-radius:20px;font-family:var(--B);font-size:.82rem;outline:none;width:180px;transition:border-color .2s,width .3s;}
 .nav-search:focus{border-color:var(--w);width:220px;}
 .nav-search::placeholder{color:#555;}
+/* ── PANEL DE CONTROLES FLOTANTE (móvil) ── */
+.r-float-toggle{display:none;position:fixed;bottom:80px;right:16px;z-index:450;
+  width:44px;height:44px;border-radius:50%;background:rgba(20,20,20,.92);
+  border:1.5px solid rgba(255,255,255,.2);color:var(--w);font-size:1.1rem;
+  cursor:pointer;align-items:center;justify-content:center;
+  box-shadow:0 4px 16px rgba(0,0,0,.5);backdrop-filter:blur(8px);}
+.r-float-panel{display:none;position:fixed;z-index:449;background:rgba(18,18,18,.96);
+  border:1.5px solid rgba(255,255,255,.15);border-radius:14px;
+  padding:12px 10px 8px;box-shadow:0 8px 32px rgba(0,0,0,.6);backdrop-filter:blur(12px);
+  min-width:110px;cursor:move;user-select:none;}
+.r-float-panel.visible{display:block;animation:fadeUp .2s ease both;}
+.r-float-panel .r-ctrl{display:block;width:100%;margin-bottom:5px;text-align:center;padding:8px 14px;font-size:.82rem;}
+.r-float-panel .r-ctrl:last-child{margin-bottom:0;}
+.r-float-drag-hint{font-size:.6rem;color:#444;text-align:center;margin-bottom:6px;letter-spacing:.05em;}
 .nav-badge{background:var(--red);font-size:.7rem;font-weight:900;padding:4px 10px;border-radius:6px;white-space:nowrap;}
 
 /* ══════════════════════ HERO ══════════════════════ */
@@ -368,7 +382,12 @@ body.hc .book-cover{filter:contrast(1.3);}
   .hero-title{font-size:2.2rem;}
   .page{padding:24px 18px 40px;}
   .p-head,.p-ch,.p-text{padding-left:16px;}
+  /* En móvil los controles fijos del lector se ocultan — aparece el botón flotante */
   .r-controls{display:none;}
+  .r-float-toggle{display:flex;}
+  /* Búsqueda en móvil: icono que expande */
+  .nav-search{width:36px;padding:5px 10px;border-radius:50%;overflow:hidden;cursor:pointer;}
+  .nav-search:focus{width:180px;border-radius:20px;cursor:text;}
   .r-wrap{padding:12px 6px;gap:8px;}
   .r-btn{width:36px;height:36px;font-size:1.1rem;}
   .r-bar{padding:0 12px;gap:8px;}
@@ -685,8 +704,20 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
       <div class="tts-word" id="ttsWord">Pulsa ▶ para empezar a escuchar</div>
       <div class="tts-track"><div class="tts-fill" id="ttsFill"></div></div>
     </div>
-    <button class="tts-speed on" id="ttsSpeedBtn" onclick="cycleTTSSpeed()">1×</button>
+    <button class="tts-speed on" id="ttsSpeedBtn" onclick="cycleTTSSpeed()">0.75×</button>
     <button class="tts-stop" onclick="ttsStop()">■ Parar</button>
+  </div>
+
+  <!-- BOTÓN FLOTANTE DE CONTROLES (solo móvil) -->
+  <button class="r-float-toggle" id="rFloatToggle" onclick="toggleFloatPanel()" title="Opciones de lectura">⚙️</button>
+  <div class="r-float-panel" id="rFloatPanel">
+    <div class="r-float-drag-hint">✥ arrastra</div>
+    <button class="r-ctrl" id="fctrlA"   onclick="toggleFontSize()">A+</button>
+    <button class="r-ctrl" id="fctrlLH"  onclick="cycleLH()">☰ Interlineado</button>
+    <button class="r-ctrl" id="fctrlBio" onclick="toggleBionic()">Bio Biónico</button>
+    <button class="r-ctrl" id="fctrlHC"  onclick="toggleHC()">◑ Contraste</button>
+    <button class="r-ctrl" id="fctrlDy"  onclick="toggleDyslexic()">Dy Dislexia</button>
+    <button class="r-ctrl" id="fctrlDk"  onclick="toggleDark()">🌙 Oscuro</button>
   </div>
 </div>
 
@@ -3531,10 +3562,10 @@ const TTS_PAUSES = {
 let ttsState = {
   active:    false,
   paused:    false,
-  segments:  [],     // array de {text, pauseAfter}
+  segments:  [],
   segIdx:    0,
   totalSeg:  0,
-  speedIdx:  1,
+  speedIdx:  0,        // 0 = 0.75× (despacio, más natural) como default
   pauseTimer: null,
 };
 
@@ -3682,11 +3713,15 @@ function ttsPlaySegment(){
   const utter = new SpeechSynthesisUtterance(seg.text);
   utter.lang  = 'es-ES';
   utter.rate  = speed;
-  utter.pitch = 1.1;
+  utter.pitch = 1.05;
 
+  // Selección de voz: priorizar voces naturales/mejoradas
   const voices = window.speechSynthesis.getVoices();
-  const esVoice = voices.find(v=>v.lang==='es-ES') ||
-                  voices.find(v=>v.lang.startsWith('es'));
+  const esVoice =
+    voices.find(v => v.lang === 'es-ES' && /natural|enhanced|premium|monica|lucia|jorge/i.test(v.name)) ||
+    voices.find(v => v.lang === 'es-ES' && !v.name.toLowerCase().includes('compact')) ||
+    voices.find(v => v.lang === 'es-ES') ||
+    voices.find(v => v.lang.startsWith('es'));
   if(esVoice) utter.voice = esVoice;
 
   utter.onend = ()=>{
@@ -4126,11 +4161,16 @@ function openModalNov(idx) {
   const mReadBtn = document.getElementById('mRead');
   if(mListBtn) mListBtn.style.display = 'none';
   if(mReadBtn) mReadBtn.style.display = 'none';
-  // Añadir fecha al final de la sinopsis
+  // Botón Ver PDF si tiene adjunto
   const mSyn = document.getElementById('mSyn');
   if(mSyn && n.addedDate){
     mSyn.innerHTML = (n.synopsis || 'Nuevo libro en la biblioteca del cole.') +
-      `<div style="font-size:.75rem;color:var(--g);margin-top:10px">📅 Añadido el ${n.addedDate}</div>`;
+      `<div style="font-size:.75rem;color:var(--g);margin-top:10px">📅 Añadido el ${n.addedDate}</div>` +
+      (n.pdfDataUrl ? `<button onclick="verPdfNovedad(${(ST.novedades||[]).indexOf(n)})"
+        style="margin-top:12px;background:linear-gradient(135deg,#34d399,#059669);color:#000;border:none;
+        padding:10px 20px;border-radius:8px;font-family:var(--B);font-weight:900;font-size:.85rem;cursor:pointer;display:block;width:100%">
+        📄 Ver PDF
+      </button>` : '');
   }
   document.getElementById('overlay').classList.add('on');
 }
@@ -4268,14 +4308,14 @@ function buildAdminNovedades() {
   const novs = ST.novedades || [];
   panel.innerHTML = `
     <div style="background:#1f1f1f;border-radius:12px;padding:24px;border:1px solid #333;max-width:720px;margin-bottom:20px;">
-      <div style="font-size:.95rem;font-weight:900;margin-bottom:4px">🆕 Añadir libro nuevo</div>
-      <div style="font-size:.8rem;color:var(--g);margin-bottom:16px">Los libros aparecerán en el perfil Novedades. Cuando quieras moverlos a su curso, cámbiales la categoría.</div>
+      <div style="font-size:.95rem;font-weight:900;margin-bottom:4px">🆕 Añadir libro / cartel nuevo</div>
+      <div style="font-size:.8rem;color:var(--g);margin-bottom:16px">Añade libros nuevos o carteles de feria. Puedes subir un PDF que los alumnos podrán ver.</div>
       <div style="display:grid;gap:10px;max-width:500px;">
-        <input id="novTitulo" placeholder="Título del libro *" style="${adminInputStyle}">
-        <input id="novAutor"  placeholder="Autor *" style="${adminInputStyle}">
-        <input id="novEmoji"  placeholder="Emoji (ej: 📚)" style="${adminInputStyle}" maxlength="4">
-        <input id="novGenero" placeholder="Género (Cuento, Aventura…)" style="${adminInputStyle}">
-        <textarea id="novSyn" rows="2" placeholder="Sinopsis breve…" style="${adminInputStyle}resize:vertical;"></textarea>
+        <input id="novTitulo" placeholder="Título *" style="${adminInputStyle}">
+        <input id="novAutor"  placeholder="Autor / Fuente *" style="${adminInputStyle}">
+        <input id="novEmoji"  placeholder="Emoji (ej: 📚 🎪 🎨)" style="${adminInputStyle}" maxlength="4">
+        <input id="novGenero" placeholder="Tipo (Cuento, Cartel de feria, Poesía…)" style="${adminInputStyle}">
+        <textarea id="novSyn" rows="2" placeholder="Descripción breve…" style="${adminInputStyle}resize:vertical;"></textarea>
         <select id="novTargetCat" style="${adminInputStyle}background:#252525;">
           <option value="">Categoría destino (para moverlo después)</option>
           <option value="primero">Infantil / 1º</option>
@@ -4286,6 +4326,17 @@ function buildAdminNovedades() {
           <option value="sexto">6º Primaria</option>
           <option value="eso">ESO</option>
         </select>
+        <!-- PDF opcional -->
+        <div style="border:1.5px dashed #444;border-radius:8px;padding:14px 16px;text-align:center;cursor:pointer;transition:border-color .2s"
+             onclick="document.getElementById('novPdfInput').click()"
+             ondragover="event.preventDefault();this.style.borderColor='#be123c'"
+             ondragleave="this.style.borderColor='#444'"
+             ondrop="event.preventDefault();this.style.borderColor='#444';handleNovPdfDrop(event)">
+          <div style="font-size:1.4rem">📄</div>
+          <div style="font-size:.82rem;color:var(--g);margin-top:4px">Arrastra un PDF aquí o pulsa para seleccionar</div>
+          <div id="novPdfName" style="font-size:.76rem;color:#34d399;margin-top:6px;min-height:16px"></div>
+        </div>
+        <input type="file" id="novPdfInput" accept=".pdf" style="display:none" onchange="handleNovPdfSelect(event)">
         <button onclick="addNovedad()" style="background:linear-gradient(135deg,#be123c,#9f1239);color:#fff;border:none;padding:11px 24px;border-radius:8px;font-family:var(--B);font-weight:900;font-size:.88rem;cursor:pointer;">
           ➕ Añadir a Novedades
         </button>
@@ -4294,7 +4345,7 @@ function buildAdminNovedades() {
     </div>
     <div style="background:#1f1f1f;border-radius:12px;padding:24px;border:1px solid #333;max-width:720px;">
       <div style="font-size:.95rem;font-weight:900;margin-bottom:4px">📦 Novedades actuales (${novs.length})</div>
-      <div style="font-size:.8rem;color:var(--g);margin-bottom:16px">Pulsa "Mover al catálogo" para reclasificar el libro a su curso definitivo.</div>
+      <div style="font-size:.8rem;color:var(--g);margin-bottom:16px">Pulsa "Mover al catálogo" para reclasificar a su curso definitivo.</div>
       <div id="novListAdmin">
         ${novs.length ? novs.map((n, i) => `
           <div id="nov-item-${i}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#252525;border-radius:8px;margin-bottom:8px;flex-wrap:wrap;">
@@ -4302,14 +4353,48 @@ function buildAdminNovedades() {
             <div style="flex:1;min-width:120px;">
               <div style="font-size:.85rem;font-weight:900">${n.title}</div>
               <div style="font-size:.75rem;color:var(--g)">${n.author} · ${n.addedDate||''}</div>
+              ${n.pdfDataUrl ? `<span style="font-size:.7rem;color:#34d399">📄 PDF adjunto</span>` : ''}
             </div>
-            <button onclick="moveNovedad(${i})" style="background:rgba(52,211,153,.15);border:1px solid rgba(52,211,153,.3);color:#34d399;padding:6px 14px;border-radius:7px;font-size:.75rem;font-weight:700;cursor:pointer;">
-              Mover al catálogo
-            </button>
+            ${n.pdfDataUrl ? `<button onclick="verPdfNovedad(${i})" style="background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);color:#34d399;padding:6px 12px;border-radius:7px;font-size:.75rem;font-weight:700;cursor:pointer;">👁 Ver PDF</button>` : ''}
+            <button onclick="moveNovedad(${i})" style="background:rgba(52,211,153,.15);border:1px solid rgba(52,211,153,.3);color:#34d399;padding:6px 14px;border-radius:7px;font-size:.75rem;font-weight:700;cursor:pointer;">Mover al catálogo</button>
             <button onclick="removeNovedad(${i})" style="background:rgba(229,9,20,.1);border:1px solid rgba(229,9,20,.25);color:#ff8080;padding:6px 12px;border-radius:7px;font-size:.75rem;cursor:pointer;">✕</button>
           </div>`).join('') : '<div style="color:#555;font-size:.85rem;padding:12px 0">No hay novedades todavía.</div>'}
       </div>
     </div>`;
+}
+
+// PDF en novedades — almacenado como base64 en ST
+let _novPdfDataUrl = null;
+
+function handleNovPdfSelect(e){
+  const file = e.target.files?.[0];
+  if(file) _procesarNovPdf(file);
+}
+function handleNovPdfDrop(e){
+  const file = e.dataTransfer.files?.[0];
+  if(file && file.type === 'application/pdf') _procesarNovPdf(file);
+}
+function _procesarNovPdf(file){
+  const maxMB = 3;
+  if(file.size > maxMB * 1024 * 1024){
+    document.getElementById('novPdfName').innerHTML = '<span style="color:#ff8080">⚠️ El PDF supera ' + maxMB + ' MB. Comprime el archivo.</span>';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    _novPdfDataUrl = e.target.result;
+    document.getElementById('novPdfName').textContent = '✅ ' + file.name + ' (' + (file.size/1024).toFixed(0) + ' KB)';
+  };
+  reader.readAsDataURL(file);
+}
+
+function verPdfNovedad(idx){
+  const n = (ST.novedades||[])[idx];
+  if(!n?.pdfDataUrl) return;
+  const win = window.open('', '_blank');
+  if(win){
+    win.document.write('<html><body style="margin:0"><embed src="'+n.pdfDataUrl+'" width="100%" height="100%" type="application/pdf"/></body></html>');
+  }
 }
 
 const adminInputStyle = 'background:#252525;border:1.5px solid #444;color:var(--w);padding:10px 14px;border-radius:8px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;';
@@ -4328,12 +4413,15 @@ function addNovedad() {
     genre: document.getElementById('novGenero')?.value.trim() || 'Cuento',
     synopsis: document.getElementById('novSyn')?.value.trim() || '',
     targetCat: document.getElementById('novTargetCat')?.value || '',
-    addedDate: new Date().toLocaleDateString('es-ES')
+    addedDate: new Date().toLocaleDateString('es-ES'),
+    pdfDataUrl: _novPdfDataUrl || null
   });
+  _novPdfDataUrl = null;
   saveState();
-  document.getElementById('novStatus').innerHTML = '<span style="color:#22c55e">✅ Libro añadido a Novedades.</span>';
-  ['novTitulo','novAutor','novEmoji','novGenero','novSyn'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
+  document.getElementById('novStatus').innerHTML = '<span style="color:#22c55e">✅ Añadido a Novedades.</span>';
+  ['novTitulo','novAutor','novEmoji','novGenero','novSyn','novPdfName'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.value !== undefined ? el.value = '' : el.textContent = '';
   });
   buildAdminNovedades();
 }
@@ -4437,6 +4525,87 @@ function removeItinLibro(ciclo, idx) {
   ST.itinerario[ciclo]?.splice(idx, 1);
   saveState();
   buildAdminItinerario();
+}
+
+/* ═══════════════════════════════════════════════════════
+   PANEL FLOTANTE ARRASTRABLE — controles accesibilidad en móvil
+════════════════════════════════════════════════════════ */
+function toggleFloatPanel(){
+  const p = document.getElementById('rFloatPanel');
+  const btn = document.getElementById('rFloatToggle');
+  if(!p) return;
+  const open = p.classList.toggle('visible');
+  btn.textContent = open ? '✕' : '⚙️';
+  if(open){
+    // Posición inicial: encima del botón flotante
+    const br = btn.getBoundingClientRect();
+    p.style.bottom = (window.innerHeight - br.top + 8) + 'px';
+    p.style.right  = '16px';
+    p.style.top    = '';
+    p.style.left   = '';
+    _initDrag(p);
+  }
+}
+
+// Sincronizar estados visuales de los controles del panel flotante
+function _syncFloatControls(){
+  const map = {fctrlA:'ctrlA', fctrlLH:'ctrlLH', fctrlBio:'ctrlBio', fctrlHC:'ctrlHC', fctrlDy:'ctrlDy', fctrlDk:'ctrlDk'};
+  Object.entries(map).forEach(([fid, rid])=>{
+    const f = document.getElementById(fid);
+    const r = document.getElementById(rid);
+    if(f && r){
+      f.className = r.className.replace('r-ctrl','r-ctrl');
+      // Copiar texto para que el estado (A++, 2×, etc) se refleje
+      if(rid === 'ctrlA' || rid === 'ctrlLH') f.textContent = r.textContent;
+    }
+  });
+}
+
+// Cerrar panel flotante al salir del lector
+const _origCloseReaderFloat = window.closeReader;
+window.closeReader = function(){
+  const p = document.getElementById('rFloatPanel');
+  if(p) p.classList.remove('visible');
+  const btn = document.getElementById('rFloatToggle');
+  if(btn) btn.textContent = '⚙️';
+  _origCloseReaderFloat();
+};
+
+function _initDrag(el){
+  if(el._dragInited) return;
+  el._dragInited = true;
+  let startX, startY, initLeft, initTop, isDragging = false;
+
+  function getPos(e){ return e.touches ? e.touches[0] : e; }
+
+  el.addEventListener('pointerdown', e=>{
+    if(e.target.tagName === 'BUTTON') return;
+    isDragging = true;
+    el.setPointerCapture(e.pointerId);
+    const p = getPos(e);
+    const rect = el.getBoundingClientRect();
+    startX = p.clientX - rect.left;
+    startY = p.clientY - rect.top;
+    el.style.right = ''; el.style.bottom = '';
+    initLeft = rect.left; initTop = rect.top;
+    el.style.left = initLeft + 'px';
+    el.style.top  = initTop  + 'px';
+    e.preventDefault();
+  });
+
+  el.addEventListener('pointermove', e=>{
+    if(!isDragging) return;
+    const p = getPos(e);
+    const nx = p.clientX - startX;
+    const ny = p.clientY - startY;
+    // Mantener dentro de la pantalla
+    const maxX = window.innerWidth  - el.offsetWidth;
+    const maxY = window.innerHeight - el.offsetHeight;
+    el.style.left = Math.max(0, Math.min(nx, maxX)) + 'px';
+    el.style.top  = Math.max(0, Math.min(ny, maxY)) + 'px';
+  });
+
+  el.addEventListener('pointerup', ()=>{ isDragging = false; });
 }
 
 /* ═══════════════════════════════════════════════════════
