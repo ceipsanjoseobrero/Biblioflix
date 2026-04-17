@@ -520,6 +520,246 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
 .tts-btn.active{background:rgba(34,197,94,.15);border-color:#22c55e;color:#22c55e;}
 @media(max-width:600px){.tts-word{display:none;}.tts-label{display:none;}}
 </style>
+<!-- QR generado internamente, sin CDN externa -->
+
+<!-- ══════════════════════════════════════════════════════
+     FIREBASE — Realtime Database
+     Pega aquí las credenciales de tu proyecto Firebase.
+     Las encuentras en: Consola Firebase → Configuración del proyecto → Tu app web
+══════════════════════════════════════════════════════ -->
+<script type="module">
+  import { initializeApp }            from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getDatabase, ref, set, get, onValue, child }
+                                       from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+  // ── CREDENCIALES FIREBASE ───────────────────────────
+  const FIREBASE_CONFIG = {
+    apiKey:            "AIzaSyDQgM2qfv8wjK5iQRGMxq6N4BUyxIZihuw",
+    authDomain:        "biblioflix-1b9f6.firebaseapp.com",
+    databaseURL:       "https://biblioflix-1b9f6-default-rtdb.europe-west1.firebasedatabase.app/",
+    projectId:         "biblioflix-1b9f6",
+    storageBucket:     "biblioflix-1b9f6.appspot.com",
+    messagingSenderId: "771825111",
+    appId:             "1:771825111:web:abc123456789"
+  };
+  // ────────────────────────────────────────────────────
+
+  // Inicializar solo si las credenciales son reales
+  const FB_READY = FIREBASE_CONFIG.apiKey !== 'TU_API_KEY';
+  window.FIREBASE_CONFIG = FIREBASE_CONFIG; // exponer para panel de estado
+  let db = null;
+
+  if(FB_READY){
+    try {
+      const app = initializeApp(FIREBASE_CONFIG);
+      db = getDatabase(app);
+      console.log('[Biblioflix] Firebase conectado ✅');
+    } catch(e) {
+      console.warn('[Biblioflix] Firebase error al inicializar:', e.message);
+    }
+  }
+
+  // Sanitizar nombre de alumno para usarlo como clave Firebase
+  // Firebase no acepta: . $ # [ ] /
+  function _fbKey(name){
+    return name.trim()
+      .toLowerCase()
+      .replace(/[.\s$#\[\]\/]/g, '_')
+      .replace(/[áàä]/g,'a').replace(/[éèë]/g,'e')
+      .replace(/[íìï]/g,'i').replace(/[óòö]/g,'o')
+      .replace(/[úùü]/g,'u').replace(/ñ/g,'n')
+      .slice(0, 40) || 'anonimo';
+  }
+
+  // ── SAVE: localStorage + Firebase (fire-and-forget) ──
+  window._fbSave = function(st){
+    // Siempre guardar en localStorage como caché
+    try { localStorage.setItem('biblioflix_v2', JSON.stringify(st)); } catch(e){}
+
+    if(!db || !st.studentName) return;
+    const key  = _fbKey(st.studentName);
+    // No subir datos de configuración del maestro (privacidad)
+    const { teacherRec, teacherRecs, adminPinned, studentSessions, novedades, itinerario, retoMes, retoFamilia, ...alumnoData } = st;
+    alumnoData._lastSaved = new Date().toISOString();
+    alumnoData._name      = st.studentName;
+
+    set(ref(db, `users/${key}`), alumnoData)
+      .catch(e => console.warn('[Biblioflix] Firebase save error:', e.message));
+  };
+
+  // ── LOAD: Firebase primero, localStorage como fallback ──
+  window._fbLoad = async function(name){
+    if(!db){
+      // Sin Firebase: devolver datos de localStorage
+      try { return JSON.parse(localStorage.getItem('biblioflix_v2') || '{}'); } catch(e){ return {}; }
+    }
+    const key = _fbKey(name);
+    try {
+      const snap = await get(ref(db, `users/${key}`));
+      if(snap.exists()){
+        const data = snap.val();
+        // Guardar en localStorage como caché offline
+        try { localStorage.setItem('biblioflix_v2', JSON.stringify(data)); } catch(e){}
+        console.log(`[Biblioflix] Datos de "${name}" cargados desde Firebase ✅`);
+        return data;
+      }
+    } catch(e){
+      console.warn('[Biblioflix] Firebase load error, usando caché local:', e.message);
+      try { return JSON.parse(localStorage.getItem('biblioflix_v2') || '{}'); } catch(e2){ return {}; }
+    }
+    return {}; // alumno nuevo
+  };
+
+  // ── STATS GLOBALES: leer todos los alumnos desde /users ──
+  window._fbLoadAllStats = async function(){
+    if(!db) return null;
+    try {
+      const snap = await get(ref(db, 'users'));
+      if(snap.exists()) return snap.val();
+    } catch(e){
+      console.warn('[Biblioflix] Firebase stats error:', e.message);
+    }
+    return null;
+  };
+
+  window._FB_READY = FB_READY;
+  console.log('[Biblioflix] Firebase módulo cargado, activo:', FB_READY);
+
+  // ── SAVE ADMIN CONFIG → /admin/ ──────────────────────
+  window._fbSaveAdmin = async function(adminData){
+    if(!db) return;
+    try{
+      await set(ref(db,'admin'), {...adminData, _lastUpdated: new Date().toISOString()});
+      console.log('[Biblioflix] Admin config guardada en Firebase ✅');
+    } catch(e){ console.warn('[Biblioflix] Admin save error:',e.message); }
+  };
+
+  // ── LOAD ADMIN CONFIG ← /admin/ ──────────────────────
+  window._fbLoadAdmin = async function(){
+    if(!db) return null;
+    try{
+      const snap = await get(ref(db,'admin'));
+      if(snap.exists()) return snap.val();
+    } catch(e){ console.warn('[Biblioflix] Admin load error:',e.message); }
+    return null;
+  };
+
+  // ── SAVE LOAN REQUEST → /loans/ ──────────────────────
+  window._fbSaveLoan = function(loan){
+    if(!db) return;
+    const key = loan.id || ('BFX-'+Date.now().toString(36).toUpperCase());
+    set(ref(db,`loans/${key}`), {
+      ...loan, status:'pendiente', _created: new Date().toISOString()
+    }).catch(e=>console.warn('[Biblioflix] Loan save error:',e.message));
+  };
+
+  // ── LOAD ALL LOANS ← /loans/ ─────────────────────────
+  window._fbLoadLoans = async function(){
+    if(!db) return null;
+    try{
+      const snap = await get(ref(db,'loans'));
+      if(snap.exists()) return snap.val();
+    } catch(e){ console.warn('[Biblioflix] Loans load error:',e.message); }
+    return null;
+  };
+
+  // ── UPDATE LOAN STATUS ────────────────────────────────
+  window._fbUpdateLoan = function(key, status){
+    if(!db) return;
+    set(ref(db,`loans/${key}/status`), status)
+      .catch(e=>console.warn('[Biblioflix] Loan update error:',e.message));
+  };
+
+  // ══════════════════════════════════════════════════════
+  //  CATÁLOGO DINÁMICO — /catalog/ en Firebase
+  //  Libros añadidos por el admin se sincronizan en
+  //  tiempo real a TODOS los dispositivos vía onValue.
+  // ══════════════════════════════════════════════════════
+
+  // ── SAVE new book → /catalog/{key} ───────────────────
+  window._fbSaveCatalogBook = async function(bookData){
+    if(!db) throw new Error('Firebase no disponible');
+    const key = 'bk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6);
+    await set(ref(db, `catalog/${key}`), { ...bookData, _key: key, _created: new Date().toISOString() });
+    console.log('[Biblioflix] Libro guardado en Firebase catalog ✅', key);
+    return key;
+  };
+
+  // ── DELETE book from /catalog/{key} ──────────────────
+  window._fbDeleteCatalogBook = async function(key){
+    if(!db) throw new Error('Firebase no disponible');
+    await set(ref(db, `catalog/${key}`), null);
+    console.log('[Biblioflix] Libro eliminado de Firebase catalog:', key);
+  };
+
+  // ── REAL-TIME LISTENER on /catalog ───────────────────
+  // Se ejecuta inmediatamente y cada vez que cambia el catálogo
+  if(FB_READY && db){
+    onValue(ref(db, 'catalog'), (snap) => {
+      try {
+        const data = snap.exists() ? snap.val() : {};
+        if(typeof window._syncFirebaseCatalog === 'function'){
+          window._syncFirebaseCatalog(data);
+        } else {
+          // Guardar para cuando esté listo
+          window._pendingCatalogData = data;
+        }
+      } catch(e){ console.warn('[Biblioflix] catalog onValue error:', e.message); }
+    }, (err) => { console.warn('[Biblioflix] catalog listener error:', err.message); });
+  }
+
+  // ── LOAD all catalog books once (for admin panel) ────
+  window._fbLoadCatalog = async function(){
+    if(!db) return {};
+    try {
+      const snap = await get(ref(db, 'catalog'));
+      return snap.exists() ? snap.val() : {};
+    } catch(e){ console.warn('[Biblioflix] catalog load error:', e.message); return {}; }
+  };
+
+  // ── LOAD ADMIN CONFIG ON STARTUP ─────────────────────
+  // Se carga en segundo plano: si hay config en Firebase, sobreescribe localStorage
+  if(FB_READY && db){
+    (async function(){
+      try{
+        const adminData = await window._fbLoadAdmin();
+        if(!adminData) return;
+        // Mezclar datos admin de Firebase en ST (mantiene prioridad Firebase)
+        const keys = ['teacherRec','teacherRecs','novedades','itinerario','retoMes','adminPinned'];
+        let changed = false;
+        keys.forEach(k=>{ if(adminData[k]!==undefined){ ST[k]=adminData[k]; changed=true; } });
+        if(changed){
+          try{ localStorage.setItem('biblioflix_v2', JSON.stringify(ST)); } catch(e){}
+          console.log('[Biblioflix] Config admin cargada desde Firebase ✅');
+          // Refrescar UI si el dashboard ya estaba visible
+          if(currentGrade) setTeacherCard(currentGrade);
+        }
+      } catch(e){ /* silencioso */ }
+    })();
+  }
+</script>
+<style>
+/* ── MODAL QR ── */
+.qr-modal{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:500;display:none;
+  align-items:center;justify-content:center;backdrop-filter:blur(8px);}
+.qr-modal.on{display:flex;animation:fadeIn .2s ease both;}
+.qr-box{background:#fff;border-radius:18px;padding:28px 28px 22px;
+  max-width:320px;width:calc(100% - 40px);text-align:center;
+  animation:scaleUp .3s ease both;position:relative;}
+.qr-titulo{font-size:.78rem;font-weight:900;color:#111;margin-bottom:2px;
+  letter-spacing:.04em;text-transform:uppercase;}
+.qr-libro{font-size:1.05rem;font-weight:900;color:#111;margin:4px 0 2px;line-height:1.3;}
+.qr-alumno{font-size:.85rem;color:#444;margin-bottom:16px;}
+#qrCanvas{margin:0 auto 14px;display:block;}
+.qr-hint{font-size:.72rem;color:#888;line-height:1.5;margin-bottom:16px;}
+.qr-close{background:#111;color:#fff;border:none;padding:10px 28px;
+  border-radius:8px;font-weight:900;font-size:.88rem;cursor:pointer;width:100%;}
+.qr-close:hover{background:#333;}
+.qr-print{background:transparent;border:1.5px solid #ccc;color:#555;
+  padding:8px 20px;border-radius:8px;font-size:.82rem;cursor:pointer;
+  width:100%;margin-bottom:8px;}
+.qr-print:hover{border-color:#999;color:#222;}
+</style>
 </head>
 <body>
 
@@ -741,8 +981,10 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
       <button class="atab"    id="atab-quiz"     onclick="switchAdminTab('quiz')">🧠 Quizzes</button>
       <button class="atab"    id="atab-students" onclick="switchAdminTab('students')">👤 Alumnos</button>
       <button class="atab"    id="atab-sheets"   onclick="switchAdminTab('sheets')">🔗 Google Sheets</button>
+      <button class="atab"    id="atab-prestamos" onclick="switchAdminTab('prestamos')">📋 Préstamos</button>
       <button class="atab"    id="atab-novedades"onclick="switchAdminTab('novedades')">🆕 Novedades</button>
       <button class="atab"    id="atab-itinerario"onclick="switchAdminTab('itinerario')">🗺️ Itinerario</button>
+      <button class="atab"    id="atab-catalogo"  onclick="switchAdminTab('catalogo')" style="background:linear-gradient(135deg,rgba(229,9,20,.25),rgba(229,9,20,.1));border-color:rgba(229,9,20,.5);color:#ff7070;">➕ Añadir Libro</button>
     </div>
   </div>
 
@@ -847,6 +1089,36 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
     </div>
   </div>
 
+  <!-- PRÉSTAMOS QR -->
+  <div class="admin-panel" id="ap-prestamos">
+    <div style="background:#1f1f1f;border-radius:12px;padding:24px;border:1px solid rgba(245,158,11,.3);max-width:720px;margin-bottom:20px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+        <span style="font-size:1.3rem">📋</span>
+        <div>
+          <div style="font-size:.95rem;font-weight:900">Solicitudes de Préstamo (QR)</div>
+          <div style="font-size:.78rem;color:var(--g);margin-top:2px">Alumnos que han generado un ticket QR desde el lector. Pulsa ✅ para marcar como entregado.</div>
+        </div>
+        <button onclick="buildAdminPrestamos()" style="margin-left:auto;background:rgba(255,255,255,.07);border:1px solid #444;color:var(--g);padding:6px 14px;border-radius:7px;font-family:var(--B);font-size:.78rem;cursor:pointer;">🔄 Actualizar</button>
+      </div>
+      <div id="prestamosList" style="margin-top:18px;">
+        <div style="color:#555;font-size:.83rem">Cargando préstamos…</div>
+      </div>
+    </div>
+    <!-- Firebase status -->
+    <div style="background:#1f1f1f;border-radius:12px;padding:24px;border:1px solid rgba(52,211,153,.2);max-width:720px;">
+      <div style="font-size:.95rem;font-weight:900;margin-bottom:4px;">🌐 Estado de Firebase</div>
+      <div style="font-size:.8rem;color:var(--g);margin-bottom:16px">La base de datos sincroniza todas las configuraciones del maestro con los dispositivos de los alumnos.</div>
+      <div id="fbStatusPanel">
+        <div style="color:#555;font-size:.83rem">Comprobando conexión…</div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+        <button onclick="fbSyncAllAdminNow()" style="background:linear-gradient(135deg,#34d399,#059669);color:#000;border:none;padding:10px 20px;border-radius:8px;font-family:var(--B);font-weight:900;font-size:.82rem;cursor:pointer;">☁️ Sincronizar config a Firebase</button>
+        <button onclick="buildAdminPrestamos()" style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.4);color:var(--gold);padding:10px 20px;border-radius:8px;font-family:var(--B);font-weight:700;font-size:.82rem;cursor:pointer;">🔄 Recargar préstamos</button>
+      </div>
+      <div id="fbSyncStatus" style="margin-top:10px;font-size:.78rem;min-height:16px;"></div>
+    </div>
+  </div>
+
   <!-- NOVEDADES ADMIN -->
   <div class="admin-panel" id="ap-novedades">
     <div style="color:var(--g);font-size:.85rem;padding:20px 0">Cargando...</div>
@@ -855,6 +1127,103 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
   <!-- ITINERARIO ADMIN -->
   <div class="admin-panel" id="ap-itinerario">
     <div style="color:var(--g);font-size:.85rem;padding:20px 0">Cargando...</div>
+  </div>
+
+  <!-- AÑADIR LIBRO AL CATÁLOGO — Firebase Realtime -->
+  <div class="admin-panel" id="ap-catalogo">
+    <!-- Formulario añadir libro -->
+    <div style="background:#1f1f1f;border-radius:14px;padding:28px;border:1.5px solid rgba(229,9,20,.3);max-width:740px;margin-bottom:22px;position:relative;overflow:hidden;">
+      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(to right,var(--red),#ff6b6b,var(--red));"></div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+        <span style="font-size:1.6rem">➕</span>
+        <div>
+          <div style="font-size:1.05rem;font-weight:900;color:#fff;">Añadir libro al catálogo</div>
+          <div style="font-size:.78rem;color:var(--g);margin-top:2px;">Se publica en Firebase y aparece en <b style="color:#fff">todos los dispositivos en tiempo real</b> ⚡</div>
+        </div>
+        <div id="catalogFbBadge" style="margin-left:auto;font-size:.7rem;font-weight:900;padding:4px 10px;border-radius:20px;background:rgba(52,211,153,.12);color:#34d399;border:1px solid rgba(52,211,153,.3);white-space:nowrap;">⏳ Comprobando…</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px;" id="catalogFormGrid">
+        <input id="cf-titulo"  placeholder="📖 Título *" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;transition:border-color .2s" onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='#444'">
+        <input id="cf-autor"   placeholder="✍️ Autor *" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;transition:border-color .2s" onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='#444'">
+        <div style="display:flex;gap:8px;">
+          <input id="cf-emoji"  placeholder="🎨 Emoji" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:80px;flex-shrink:0;box-sizing:border-box;transition:border-color .2s" maxlength="4" onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='#444'">
+          <input id="cf-isbn"   placeholder="📷 ISBN (portada automática)" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;flex:1;box-sizing:border-box;transition:border-color .2s" onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='#444'">
+        </div>
+        <select id="cf-cat" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;cursor:pointer;">
+          <option value="">📚 Nivel / Curso *</option>
+          <option value="primero">Infantil / 1º Primaria</option>
+          <option value="segundo">2º Primaria</option>
+          <option value="tercero">3º Primaria</option>
+          <option value="cuarto">4º Primaria</option>
+          <option value="quinto">5º Primaria</option>
+          <option value="sexto">6º Primaria</option>
+          <option value="eso">ESO</option>
+          <option value="novedades">🆕 Novedades (todos)</option>
+        </select>
+        <select id="cf-genero" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;cursor:pointer;">
+          <option value="Cuento">📖 Cuento</option>
+          <option value="Aventura">⚔️ Aventura</option>
+          <option value="Humor">😄 Humor</option>
+          <option value="Fantasía">🧙 Fantasía</option>
+          <option value="Misterio">🔍 Misterio</option>
+          <option value="Clásico">📜 Clásico</option>
+          <option value="Ciencia Ficción">🚀 Ciencia Ficción</option>
+          <option value="Historia">🏛 Historia</option>
+          <option value="Deportes">⚽ Deportes</option>
+          <option value="Poesía">🎭 Poesía</option>
+          <option value="Divulgación">🔬 Divulgación</option>
+          <option value="Teatro">🎪 Teatro</option>
+        </select>
+        <input id="cf-editorial" placeholder="🏢 Editorial (ej: SM, Anaya…)" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;transition:border-color .2s" onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='#444'">
+        <input id="cf-badge" placeholder="🏷 Etiqueta (ej: NUEVO, FERIA, RECOMENDADO)" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;transition:border-color .2s" onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='#444'">
+      </div>
+
+      <textarea id="cf-synopsis" rows="3" placeholder="📝 Sinopsis breve del libro… *" style="background:#252525;border:1.5px solid #444;color:var(--w);padding:11px 14px;border-radius:9px;font-family:var(--B);font-size:.88rem;outline:none;width:100%;box-sizing:border-box;resize:vertical;margin-top:12px;transition:border-color .2s" onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='#444'"></textarea>
+
+      <!-- Color de portada -->
+      <div style="margin-top:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <div style="font-size:.78rem;font-weight:800;color:var(--g);">🎨 Color de portada:</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="colorPaletteAdmin">
+          <div class="cv-color-opt" data-c1="#1a0830" data-c2="#4c1d95" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#1a0830,#4c1d95);border:2px solid transparent;transition:all .2s" title="Morado oscuro"></div>
+          <div class="cv-color-opt" data-c1="#0a1628" data-c2="#1e3a5f" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#0a1628,#1e3a5f);border:2px solid transparent;transition:all .2s" title="Azul marino"></div>
+          <div class="cv-color-opt" data-c1="#1a0000" data-c2="#7f1d1d" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#1a0000,#7f1d1d);border:2px solid transparent;transition:all .2s" title="Rojo oscuro"></div>
+          <div class="cv-color-opt" data-c1="#052e16" data-c2="#14532d" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#052e16,#14532d);border:2px solid transparent;transition:all .2s" title="Verde bosque"></div>
+          <div class="cv-color-opt" data-c1="#0c1a0c" data-c2="#1a3a1a" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#0c1a0c,#1a3a1a);border:2px solid transparent;transition:all .2s" title="Verde oscuro"></div>
+          <div class="cv-color-opt" data-c1="#1c1917" data-c2="#44403c" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#1c1917,#44403c);border:2px solid transparent;transition:all .2s" title="Café oscuro"></div>
+          <div class="cv-color-opt" data-c1="#0f172a" data-c2="#1e40af" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#0f172a,#1e40af);border:2px solid transparent;transition:all .2s" title="Azul eléctrico"></div>
+          <div class="cv-color-opt" data-c1="#1a0d00" data-c2="#92400e" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#1a0d00,#92400e);border:2px solid transparent;transition:all .2s" title="Naranja oscuro"></div>
+          <div class="cv-color-opt" data-c1="#0d1117" data-c2="#21262d" onclick="selectCatalogColor(this)" style="width:32px;height:32px;border-radius:8px;cursor:pointer;background:linear-gradient(135deg,#0d1117,#21262d);border:2px solid transparent;transition:all .2s" title="Negro grafito"></div>
+        </div>
+        <div id="cf-colorPreview" style="width:60px;height:36px;border-radius:8px;border:2px solid #333;background:linear-gradient(135deg,#1a0830,#4c1d95);flex-shrink:0;"></div>
+      </div>
+      <input type="hidden" id="cf-c1" value="#1a0830">
+      <input type="hidden" id="cf-c2" value="#4c1d95">
+
+      <div style="display:flex;gap:10px;align-items:center;margin-top:20px;flex-wrap:wrap;">
+        <button onclick="addLibroAlCatalogo()" id="btnAddCatalogo"
+          style="background:linear-gradient(135deg,var(--red),#9f1239);color:#fff;border:none;padding:12px 28px;border-radius:9px;font-family:var(--B);font-weight:900;font-size:.92rem;cursor:pointer;display:flex;align-items:center;gap:8px;transition:filter .2s,transform .1s;"
+          onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">
+          ⚡ Publicar en Firebase
+        </button>
+        <button onclick="resetCatalogForm()" style="background:transparent;border:1.5px solid #444;color:var(--g);padding:12px 20px;border-radius:9px;font-family:var(--B);font-weight:700;font-size:.85rem;cursor:pointer;">↺ Limpiar</button>
+        <div id="cfStatus" style="font-size:.82rem;min-height:18px;flex:1;"></div>
+      </div>
+    </div>
+
+    <!-- Lista de libros añadidos vía Firebase -->
+    <div style="background:#1f1f1f;border-radius:14px;padding:24px;border:1px solid #333;max-width:740px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <div>
+          <div style="font-size:.95rem;font-weight:900;">📡 Libros publicados en Firebase</div>
+          <div style="font-size:.78rem;color:var(--g);margin-top:2px;">Se actualizan en tiempo real en todos los dispositivos.</div>
+        </div>
+        <button onclick="buildAdminCatalogo()" style="margin-left:auto;background:rgba(255,255,255,.07);border:1px solid #444;color:var(--g);padding:6px 14px;border-radius:7px;font-family:var(--B);font-size:.78rem;cursor:pointer;">🔄</button>
+      </div>
+      <div id="catalogFirebaseList">
+        <div style="color:#555;font-size:.85rem;padding:16px 0;text-align:center;">⏳ Cargando desde Firebase…</div>
+      </div>
+    </div>
   </div>
 
   <!-- GOOGLE SHEETS -->
@@ -2530,13 +2899,25 @@ BOOKS.forEach(b=>{
 </script>
 <script>
 /* ═══════════════════════════════════════════════════════
-   STATE & STORAGE
+   STATE & STORAGE — localStorage + Firebase (si configurado)
 ════════════════════════════════════════════════════════ */
 const LS_KEY = 'biblioflix_v2';
+
 function loadState(){
+  // Carga síncrona inicial desde localStorage (caché)
+  // Los datos de Firebase se cargarán async en confirmStudentLogin
   try{ return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); }catch(e){return {};}
 }
-function saveState(){ localStorage.setItem(LS_KEY, JSON.stringify(ST)); }
+
+function saveState(){
+  // Guardar localmente y enviar a Firebase (si disponible)
+  if(typeof window._fbSave === 'function'){
+    window._fbSave(ST);
+  } else {
+    // Firebase aún no cargó — solo localStorage
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(ST)); }catch(e){}
+  }
+}
 
 let ST = loadState();
 if(!ST.progress)     ST.progress={};
@@ -2996,8 +3377,22 @@ function renderPage(){
     quizHTML=`<div class="quiz-block"><div class="quiz-q">🤔 ${p.quiz.q}</div><div class="quiz-opts">${optsHTML}</div><div class="quiz-feedback ${fbClass} ${answered!==null?'show':''}">${fbText}</div></div>`;
   }
 
+  const esUltima = currentPage === total - 1;
+  const btnQuiero = esUltima
+    ? `<div style="margin-top:22px;text-align:center">
+        <button onclick="abrirQR()" style="background:linear-gradient(135deg,#f59e0b,#b45309);
+          color:#fff;border:none;padding:13px 28px;border-radius:12px;font-family:var(--B);
+          font-weight:900;font-size:.95rem;cursor:pointer;box-shadow:0 4px 16px rgba(245,158,11,.4);
+          transition:transform .15s,filter .2s;display:inline-flex;align-items:center;gap:8px;"
+          onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">
+          📚 ¡Quiero este libro!
+        </button>
+        <div style="font-size:.72rem;color:var(--g);margin-top:8px">Genera un código QR para el préstamo</div>
+       </div>`
+    : '';
+
   const pageEl=document.getElementById('pageEl');
-  pageEl.innerHTML=`<div class="p-deco">${p.emoji||b.emoji}</div><div class="p-ch">${p.ch}</div><div class="p-head">${p.title}</div><div class="p-text">${p.text.replace(/\n/g,'<br><br>')}</div>${quizHTML}<div class="p-num">— ${currentPage+1} —</div>`;
+  pageEl.innerHTML=`<div class="p-deco">${p.emoji||b.emoji}</div><div class="p-ch">${p.ch}</div><div class="p-head">${p.title}</div><div class="p-text">${p.text.replace(/\n/g,'<br><br>')}</div>${quizHTML}<div class="p-num">— ${currentPage+1} —</div>${btnQuiero}`;
   pageEl.classList.remove('flip-in','flip-in-back');
   void pageEl.offsetWidth;
   pageEl.classList.add('flip-in');
@@ -3164,6 +3559,8 @@ function switchAdminTab(tab){
   if(tab==='quiz')       buildComprensionPanel();
   if(tab==='novedades')  buildAdminNovedades();
   if(tab==='itinerario') buildAdminItinerario();
+  if(tab==='prestamos')  { buildAdminPrestamos(); buildFbStatus(); }
+  if(tab==='catalogo')   buildAdminCatalogo();
 }
 
 function loadSheetsAdminPanel(){
@@ -3180,43 +3577,118 @@ function buildAdminPanel(){
   buildRecForm();
   renderStudentSessions();
   setTimeout(buildRetoAdmin,100);
+  // Precargar badge de estado Firebase en la pestaña catálogo
+  setTimeout(()=>{
+    const badge = document.getElementById('catalogFbBadge');
+    if(badge){
+      const ready = window._FB_READY;
+      badge.textContent = ready ? '🟢 Firebase activo' : '🔴 Sin Firebase';
+      badge.style.color = ready ? '#34d399' : '#ef4444';
+    }
+  }, 500);
 }
 
 /* STATS */
 function buildStats(){
-  const totalReads=Object.values(ST.reads).reduce((a,b)=>a+b,0);
-  const totalCompleted=ST.completed.length;
-  const totalBooks=BOOKS.length;
-  const activeBooks=Object.keys(ST.reads).length;
-  const grid=document.getElementById('statsGrid');
-  grid.innerHTML=[
-    {icon:'📖',val:totalReads,   lbl:'Lecturas totales'},
-    {icon:'✅',val:totalCompleted,lbl:'Libros completados'},
-    {icon:'📚',val:totalBooks,   lbl:'Libros en catálogo'},
-    {icon:'🔥',val:activeBooks,  lbl:'Libros visitados'},
-    {icon:'🏆',val:ST.achievements.length,lbl:'Logros desbloqueados'},
-    {icon:'❤️',val:ST.myList.length,lbl:'En lista personal'},
-  ].map(s=>`<div class="stat-card"><div class="stat-icon">${s.icon}</div><div class="stat-val">${s.val}</div><div class="stat-lbl">${s.lbl}</div></div>`).join('');
+  // Renderizar con datos locales inmediatamente
+  _renderStatsUI(ST.reads, ST.completed, ST.achievements, ST.myList, null);
 
-  // Top books chart
-  const topBooks=Object.entries(ST.reads).sort((a,b)=>b[1]-a[1]).slice(0,8);
-  const maxR=topBooks[0]?.[1]||1;
-  document.getElementById('topBooksChart').innerHTML=topBooks.length
+  // Si Firebase disponible, cargar datos globales de todos los alumnos
+  if(typeof window._fbLoadAllStats === 'function'){
+    const indicator = document.getElementById('statsGrid');
+    if(indicator){
+      const note = document.createElement('div');
+      note.id = 'fbStatsNote';
+      note.style.cssText = 'font-size:.75rem;color:#60a5fa;margin-bottom:10px;';
+      note.textContent = '🔄 Cargando estadísticas globales de Firebase…';
+      indicator.parentNode.insertBefore(note, indicator);
+    }
+
+    window._fbLoadAllStats().then(allUsers => {
+      const noteEl = document.getElementById('fbStatsNote');
+      if(noteEl) noteEl.remove();
+
+      if(!allUsers){
+        // Sin Firebase o sin datos — quedarse con datos locales
+        return;
+      }
+
+      // Agregar datos de todos los alumnos
+      const globalReads = {};
+      const globalCompleted = new Set();
+      let   globalXP = 0;
+      let   nAlumnos = 0;
+
+      Object.entries(allUsers).forEach(([key, data]) => {
+        nAlumnos++;
+        if(data.reads){
+          Object.entries(data.reads).forEach(([bid, n]) => {
+            globalReads[bid] = (globalReads[bid] || 0) + n;
+          });
+        }
+        if(data.completed) data.completed.forEach(id => globalCompleted.add(id));
+        if(data.xp) globalXP += data.xp;
+      });
+
+      _renderStatsUI(globalReads, [...globalCompleted], [], [], {nAlumnos, globalXP});
+
+    }).catch(e => {
+      const noteEl = document.getElementById('fbStatsNote');
+      if(noteEl){ noteEl.textContent = '⚠️ Sin conexión — mostrando datos de este dispositivo.'; noteEl.style.color='#f59e0b'; }
+    });
+  }
+}
+
+function _renderStatsUI(reads, completed, achievements, myList, globalInfo){
+  const totalReads     = Object.values(reads).reduce((a,b)=>a+b,0);
+  const totalCompleted = completed.length;
+  const totalBooks     = BOOKS.length;
+  const activeBooks    = Object.keys(reads).length;
+  const grid           = document.getElementById('statsGrid');
+
+  const cards = [
+    {icon:'📖', val:totalReads,      lbl: globalInfo ? 'Lecturas totales (todos)' : 'Lecturas totales'},
+    {icon:'✅', val:totalCompleted,  lbl: globalInfo ? 'Libros completados (todos)' : 'Libros completados'},
+    {icon:'📚', val:totalBooks,      lbl:'Libros en catálogo'},
+    {icon:'🔥', val:activeBooks,     lbl: globalInfo ? 'Libros visitados (distintos)' : 'Libros visitados'},
+    ...(globalInfo
+      ? [{icon:'👤', val:globalInfo.nAlumnos, lbl:'Alumnos activos en Firebase'},
+         {icon:'🏆', val:globalInfo.globalXP, lbl:'XP total del cole'}]
+      : [{icon:'🏆', val:achievements.length, lbl:'Logros desbloqueados'},
+         {icon:'❤️', val:myList.length,        lbl:'En lista personal'}]
+    ),
+  ];
+
+  grid.innerHTML = cards.map(s =>
+    `<div class="stat-card"><div class="stat-icon">${s.icon}</div><div class="stat-val">${s.val}</div><div class="stat-lbl">${s.lbl}</div></div>`
+  ).join('');
+
+  if(globalInfo){
+    // Añadir badge de que son datos globales
+    const badge = document.createElement('div');
+    badge.style.cssText = 'font-size:.72rem;color:#34d399;margin-bottom:8px;';
+    badge.textContent = '🌐 Datos consolidados de Firebase — todos los alumnos del cole';
+    grid.parentNode.insertBefore(badge, grid);
+  }
+
+  // Gráfico de libros más leídos
+  const topBooks = Object.entries(reads).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const maxR     = topBooks[0]?.[1] || 1;
+  document.getElementById('topBooksChart').innerHTML = topBooks.length
     ? topBooks.map(([id,n])=>{
-        const b=BOOKS.find(x=>x.id===parseInt(id));
-        return `<div class="chart-bar-row"><div class="chart-bar-label">${b?b.title:'Desconocido'}</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:${Math.round((n/maxR)*100)}%"></div></div><div class="chart-bar-num">${n}</div></div>`;
+        const b = BOOKS.find(x=>x.id===parseInt(id));
+        return `<div class="chart-bar-row"><div class="chart-bar-label">${b?b.title.slice(0,30):'Desconocido'}</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:${Math.round((n/maxR)*100)}%"></div></div><div class="chart-bar-num">${n}</div></div>`;
       }).join('')
-    : '<div style="color:var(--g);font-size:.82rem">Aún no hay datos de lectura. Los datos se acumulan cuando los alumnos leen.</div>';
+    : '<div style="color:var(--g);font-size:.82rem">Aún no hay datos de lectura.</div>';
 
-  // Grade activity chart
-  const gradeMap={};
+  // Gráfico por curso
+  const gradeMap = {};
   CATS.filter(c=>c.grade).forEach(c=>{
-    const books=BOOKS.filter(b=>b.cat===c.id);
-    const reads=books.reduce((acc,b)=>(ST.reads[b.id]||0)+acc,0);
-    gradeMap[c.grade]=reads;
+    const books = BOOKS.filter(b=>b.cat===c.id);
+    gradeMap[c.grade] = books.reduce((acc,b)=>(reads[b.id]||0)+acc,0);
   });
-  const maxG=Math.max(...Object.values(gradeMap),1);
-  document.getElementById('gradeChart').innerHTML=Object.entries(gradeMap).map(([g,n])=>
+  const maxG = Math.max(...Object.values(gradeMap), 1);
+  document.getElementById('gradeChart').innerHTML = Object.entries(gradeMap).map(([g,n])=>
     `<div class="chart-bar-row"><div class="chart-bar-label">${g}</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:${Math.round((n/maxG)*100)}%;background:var(--gold)"></div></div><div class="chart-bar-num">${n}</div></div>`
   ).join('');
 }
@@ -4053,19 +4525,71 @@ const CAT_NOVEDADES = 'novedades';
 // go() unificado — lógica de Novedades incluida arriba
 
 // Definición de confirmStudentLogin (única y definitiva)
-window.confirmStudentLogin = function() {
+window.confirmStudentLogin = async function() {
   const name = document.getElementById('studentNameInput').value.trim();
   if (!name) { document.getElementById('studentNameInput').focus(); return; }
-  ST.studentName = name;
-  if (!ST.studentSessions) ST.studentSessions = [];
-  ST.studentSessions.push({
-    name, grade: pendingGrade,
-    date: new Date().toLocaleDateString('es-ES'),
-    time: new Date().toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'})
-  });
-  saveState();
+
+  // Mostrar indicador de carga mientras se busca en Firebase
+  const enterBtn = document.querySelector('.student-enter');
+  const originalText = enterBtn?.textContent;
+  if(enterBtn){ enterBtn.textContent = '⏳ Cargando...'; enterBtn.disabled = true; }
+
+  try {
+    // 1. Limpiar estado actual (del alumno anterior)
+    const settingsGuardados = ST.settings || {};          // mantener preferencias de pantalla
+    const maestroData = {                                  // mantener config del maestro
+      teacherRec:  ST.teacherRec,
+      teacherRecs: ST.teacherRecs,
+      adminPinned: ST.adminPinned,
+      novedades:   ST.novedades,
+      itinerario:  ST.itinerario,
+      retoMes:     ST.retoMes,
+      retoFamilia: ST.retoFamilia,
+      studentSessions: ST.studentSessions,
+    };
+
+    // 2. Cargar datos del nuevo alumno (Firebase o localStorage)
+    let alumnoData = {};
+    if(typeof window._fbLoad === 'function'){
+      alumnoData = await window._fbLoad(name);
+    } else {
+      // Firebase aún no disponible — usar cache local si coincide el nombre
+      const cached = loadState();
+      if(cached.studentName === name) alumnoData = cached;
+    }
+
+    // 3. Reconstruir ST con datos del alumno + datos del maestro
+    Object.assign(ST, {
+      progress:     {},
+      completed:    [],
+      myList:       [],
+      reads:        {},
+      settings:     settingsGuardados,
+      achievements: [],
+      xp:           0,
+      streak:       {count:0, last:''},
+      recReads:     [],
+      quizResults:  {},
+    }, alumnoData, maestroData);
+
+    // 4. Registrar nombre y sesión
+    ST.studentName = name;
+    _setSessionName(name);
+    if(!ST.studentSessions) ST.studentSessions = [];
+    ST.studentSessions.push({
+      name, grade: pendingGrade,
+      date: new Date().toLocaleDateString('es-ES'),
+      time: new Date().toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'})
+    });
+    saveState();
+
+  } finally {
+    if(enterBtn){ enterBtn.textContent = originalText; enterBtn.disabled = false; }
+  }
+
   closeStudentModal();
   updateStudentBadge();
+
   if (pendingGrade === 'Novedades') {
     goNovedades();
   } else {
@@ -4428,6 +4952,9 @@ function addNovedad() {
 
 function removeNovedad(idx) {
   if (!ST.novedades) return;
+  const n = ST.novedades[idx];
+  if(!n) return;
+  if(!confirm(`¿Borrar la novedad «${n.title}»?\nEsta acción no se puede deshacer.`)) return;
   ST.novedades.splice(idx, 1);
   saveState();
   buildAdminNovedades();
@@ -4607,6 +5134,429 @@ function _initDrag(el){
 
   el.addEventListener('pointerup', ()=>{ isDragging = false; });
 }
+
+/* ═══════════════════════════════════════════════════════
+   QR — "Quiero este libro" (última página del lector)
+   QR GENERATOR — 100% offline, sin dependencia externa
+   Basado en el estándar ISO 18004, modo byte, versión 1-10,
+   corrección de errores M.
+════════════════════════════════════════════════════════ */
+/* ── Micro-implementación QR standalone (< 4 KB) ──────
+   Genera la matriz QR y la renderiza en un <canvas>.
+   Compatible con todos los navegadores modernos.
+──────────────────────────────────────────────────────── */
+const _QR = (function(){
+  // ── GF(256) aritmética para Reed-Solomon ──
+  const EXP=new Uint8Array(512), LOG=new Uint8Array(256);
+  (function(){
+    let x=1;
+    for(let i=0;i<255;i++){
+      EXP[i]=x; LOG[x]=i;
+      x<<=1; if(x&256) x^=285;
+    }
+    for(let i=255;i<512;i++) EXP[i]=EXP[i-255];
+  })();
+  const gfMul=(a,b)=>a&&b?EXP[LOG[a]+LOG[b]]:0;
+  const gfPoly=(e)=>{
+    let p=[1];
+    for(let i=0;i<e;i++){
+      const t=new Uint8Array(p.length+1);
+      for(let j=0;j<p.length;j++) t[j]^=gfMul(p[j],EXP[i]);
+      for(let j=0;j<p.length;j++) t[j+1]^=p[j];
+      p=[...t];
+    }
+    return p;
+  };
+  // ── Tablas de parámetros QR por versión (niveles M) ──
+  // [ecWords, g1Blocks, g1Words, g2Blocks, g2Words]
+  const PARAMS=[,
+    [10,1,16,0,0],[16,1,28,0,0],[26,1,44,0,0],[18,2,32,0,0],[24,2,43,0,0],
+    [16,4,27,0,0],[18,4,31,0,0],[22,2,38,2,39],[22,3,36,2,37],[26,4,36,2,37]
+  ];
+  // ── Encoding ──
+  function encodeData(text){
+    const bytes=[];
+    for(let i=0;i<text.length;i++){
+      const c=text.charCodeAt(i);
+      if(c<128) bytes.push(c);
+      else if(c<2048){bytes.push(0xC0|(c>>6));bytes.push(0x80|(c&0x3F));}
+      else{bytes.push(0xE0|(c>>12));bytes.push(0x80|((c>>6)&0x3F));bytes.push(0x80|(c&0x3F));}
+    }
+    return bytes;
+  }
+  // ── Encontrar versión mínima ──
+  const CAPA=[,16,28,44,64,86,108,124,154,182,216];
+  function getVersion(n){
+    for(let v=1;v<=10;v++) if(n+3<=CAPA[v]) return v;
+    return 10;
+  }
+  // ── Reed-Solomon ──
+  function rsEC(data,ecLen){
+    const poly=gfPoly(ecLen);
+    const msg=[...data,...new Array(ecLen).fill(0)];
+    for(let i=0;i<data.length;i++){
+      const coef=msg[i];
+      if(coef) for(let j=0;j<poly.length;j++) msg[i+j]^=gfMul(poly[j],coef);
+    }
+    return msg.slice(data.length);
+  }
+  // ── Construcción de codewords ──
+  function buildCodewords(text){
+    const bytes=encodeData(text);
+    const ver=getVersion(bytes.length);
+    const [ecW,g1B,g1W,g2B,g2W]=PARAMS[ver];
+    const total=g1B*g1W+g2B*g2W;
+    // Cabecera: modo byte (0100) + longitud + datos + terminador
+    const bits=[];
+    const push=(v,n)=>{for(let i=n-1;i>=0;i--) bits.push((v>>i)&1);};
+    push(4,4);
+    push(bytes.length, ver<10?8:16);
+    bytes.forEach(b=>push(b,8));
+    // Relleno hasta total*8
+    while(bits.length<total*8-4) push(0,1);
+    while(bits.length%8) bits.push(0);
+    const pad=[236,17];
+    for(let i=0,pi=0;bits.length/8<total;i++,pi=(pi+1)%2) push(pad[pi],8);
+    // Construir bloques
+    const dcw=[];
+    for(let i=0;i<bits.length;i+=8) dcw.push(bits.slice(i,i+8).reduce((a,b,j)=>a|(b<<(7-j)),0));
+    const blocks=[];
+    let off=0;
+    for(let b=0;b<g1B+g2B;b++){
+      const w=b<g1B?g1W:g2W;
+      blocks.push({data:dcw.slice(off,off+w),ec:null});
+      off+=w;
+    }
+    blocks.forEach(bl=>bl.ec=rsEC(bl.data,ecW));
+    // Intercalar
+    const cw=[];
+    const maxD=Math.max(...blocks.map(b=>b.data.length));
+    for(let i=0;i<maxD;i++) blocks.forEach(b=>{if(i<b.data.length) cw.push(b.data[i]);});
+    blocks.forEach(b=>b.ec.forEach(e=>cw.push(e)));
+    return {cw,ver};
+  }
+  // ── Matriz QR ──
+  function buildMatrix(text){
+    const {cw,ver}=buildCodewords(text);
+    const size=ver*4+17;
+    const m=Array.from({length:size},()=>new Int8Array(size).fill(-1));
+    const used=Array.from({length:size},()=>new Uint8Array(size));
+    function setFix(r,c,v){m[r][c]=v;used[r][c]=1;}
+    // Finder patterns
+    function finder(tr,tc){
+      for(let r=0;r<7;r++) for(let c=0;c<7;c++){
+        const v=(r===0||r===6||c===0||c===6||( r>=2&&r<=4&&c>=2&&c<=4))?1:0;
+        setFix(tr+r,tc+c,v);
+      }
+    }
+    finder(0,0); finder(0,size-7); finder(size-7,0);
+    // Separadores
+    for(let i=0;i<8;i++){
+      [0,1,2,3,4,5,6,7].forEach(j=>{
+        [[i,7],[i,size-8],[7,i],[size-8,i]].forEach(([r,c])=>{if(r<size&&c>=0&&c<size) setFix(r,c,0);});
+      });
+    }
+    for(let i=0;i<8;i++){
+      setFix(7,i,0);setFix(i,7,0);
+      setFix(7,size-8+i,0);setFix(i,size-8,0);
+      setFix(size-8,i,0);setFix(size-8+i,7,0);
+    }
+    // Timing
+    for(let i=8;i<size-8;i++){
+      setFix(6,i,i%2?0:1); setFix(i,6,i%2?0:1);
+    }
+    // Alignment patterns (ver>=2)
+    const AP=[[],[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,28,46]];
+    if(ver>=2){
+      const pos=AP[ver];
+      for(let a=0;a<pos.length;a++) for(let b=0;b<pos.length;b++){
+        const [r,c]=[pos[a],pos[b]];
+        if(used[r][c]) continue;
+        for(let dr=-2;dr<=2;dr++) for(let dc=-2;dc<=2;dc++){
+          setFix(r+dr,c+dc,(Math.abs(dr)===2||Math.abs(dc)===2||(!dr&&!dc))?1:0);
+        }
+      }
+    }
+    // Dark module
+    setFix(size-8,8,1);
+    // Format info placeholder
+    const fi=[[0,8],[1,8],[2,8],[3,8],[4,8],[5,8],[7,8],[8,7],[8,6],[8,5],[8,4],[8,3],[8,2],[8,1],[8,0],
+              [8,size-1],[8,size-2],[8,size-3],[8,size-4],[8,size-5],[8,size-6],[8,size-7],[8,size-8],
+              [size-7,8],[size-6,8],[size-5,8],[size-4,8],[size-3,8],[size-2,8],[size-1,8]];
+    fi.forEach(([r,c])=>{if(m[r][c]===-1){setFix(r,c,0);}});
+    // Data placement
+    const BITS=[]; cw.forEach(byte=>{for(let i=7;i>=0;i--) BITS.push((byte>>i)&1);});
+    let bi=0;
+    for(let c=size-1;c>=0;c-=2){
+      if(c===6) c--;
+      for(let rr=0;rr<size;rr++){
+        const r=((c<6?c:c+1)%4<2)?rr:size-1-rr;
+        for(let d=0;d<2;d++){
+          const cc=c-d;
+          if(!used[r][cc]&&bi<BITS.length){ m[r][cc]=BITS[bi++]; used[r][cc]=1; }
+        }
+      }
+    }
+    // Mask pattern 0: (row+col)%2===0
+    for(let r=0;r<size;r++) for(let c=0;c<size;c++){
+      if(!used[r][c]) m[r][c]^=((r+c)%2===0)?1:0;
+    }
+    // Format info (mask 0, EC level M = 00)
+    const FMT=0b101010000010010; // precomputed mask0+M
+    const fmtBits=[];
+    for(let i=14;i>=0;i--) fmtBits.push((FMT>>i)&1);
+    const FP=[[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
+    FP.forEach(([r,c],i)=>{ m[r][c]=fmtBits[i]; });
+    const FP2=[[8,size-1],[8,size-2],[8,size-3],[8,size-4],[8,size-5],[8,size-6],[8,size-7],[size-8,8],[size-7,8],[size-6,8],[size-5,8],[size-4,8],[size-3,8],[size-2,8],[size-1,8]];
+    FP2.forEach(([r,c],i)=>{ m[r][c]=fmtBits[i]; });
+    return {m,size};
+  }
+  // ── Render en canvas ──
+  function renderToCanvas(container, text, px=4){
+    container.innerHTML='';
+    let mat, sz;
+    try{ const r=buildMatrix(text); mat=r.m; sz=r.size; }
+    catch(e){ container.innerHTML='<div style="color:#c00;font-size:.7rem;padding:8px">Error QR: texto demasiado largo</div>'; return; }
+    const totalPx=(sz+8)*px;
+    const canvas=document.createElement('canvas');
+    canvas.width=canvas.height=totalPx;
+    canvas.style.cssText=`width:${Math.min(200,totalPx)}px;height:${Math.min(200,totalPx)}px;display:block;margin:0 auto;image-rendering:pixelated;border-radius:6px;`;
+    const ctx=canvas.getContext('2d');
+    ctx.fillStyle='#fff'; ctx.fillRect(0,0,totalPx,totalPx);
+    const off=4*px;
+    ctx.fillStyle='#111';
+    for(let r=0;r<sz;r++) for(let c=0;c<sz;c++){
+      if(mat[r][c]===1) ctx.fillRect(off+c*px, off+r*px, px, px);
+    }
+    container.appendChild(canvas);
+    return canvas;
+  }
+  return { renderToCanvas };
+})();
+
+function abrirQR(){
+  const titulo  = currentBook?.title   || '?';
+  const alumno  = ST.studentName       || 'Alumno/a';
+  const curso   = currentGrade         || '—';
+  const fecha   = new Date().toLocaleDateString('es-ES');
+  const hora    = new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+  const id      = 'BFX-'+Date.now().toString(36).toUpperCase();
+
+  // Ticket estructurado — cuando el maestro escanea ve todos los datos
+  const ticket = [
+    'BIBLIOFLIX · CEIP SAN JOSE OBRERO',
+    'SOLICITUD DE PRESTAMO',
+    'ID:'+id,
+    'LIBRO:'+titulo,
+    'ALUMNO:'+alumno,
+    'CURSO:'+curso,
+    'FECHA:'+fecha+' '+hora
+  ].join('\n');
+
+  // Guardar préstamo en Firebase si está disponible
+  if(typeof window._fbSaveLoan === 'function'){
+    window._fbSaveLoan({id, libro:titulo, alumno, curso, fecha, hora});
+  }
+  // Guardar localmente también (offline / fallback)
+  if(!ST.localLoans) ST.localLoans = {};
+  ST.localLoans[id] = {id, libro:titulo, alumno, curso, fecha, hora, status:'pendiente', _created: new Date().toISOString()};
+  // No llamar saveState aquí para no disparar sync admin innecesariamente
+  try{ localStorage.setItem('biblioflix_v2', JSON.stringify(ST)); } catch(e){}
+
+  document.getElementById('qrTitulo').textContent = titulo;
+  document.getElementById('qrAlumno').textContent =
+    `👤 ${alumno}  ·  📚 ${curso}  ·  📅 ${fecha} ${hora}`;
+  // Guardar referencia para imprimir
+  window._qrCurrentTicket = {titulo, alumno, curso, fecha, hora, id, ticket};
+
+  const container = document.getElementById('qrCanvas');
+  container.innerHTML = '';
+  // Generación 100% offline con canvas
+  try {
+    _QR.renderToCanvas(container, ticket, 4);
+  } catch(e) {
+    container.innerHTML = `
+      <div style="width:200px;margin:0 auto;background:#f5f5f5;border:2px solid #333;
+        border-radius:8px;padding:16px;font-family:monospace;font-size:.68rem;
+        color:#111;text-align:left;line-height:1.7;">
+        <div style="font-weight:900;margin-bottom:8px;text-align:center;font-size:.8rem">📋 TICKET PRÉSTAMO</div>
+        <div><b>ID:</b> ${id}</div>
+        <div><b>Libro:</b> ${titulo.slice(0,35)}</div>
+        <div><b>Alumno:</b> ${alumno}</div>
+        <div><b>Curso:</b> ${curso}</div>
+        <div><b>Fecha:</b> ${fecha} ${hora}</div>
+        <div style="margin-top:8px;color:#666;font-size:.6rem;text-align:center">Muestra esta pantalla al maestro</div>
+      </div>`;
+  }
+
+  document.getElementById('qrModal').classList.add('on');
+}
+
+function cerrarQR(){
+  document.getElementById('qrModal').classList.remove('on');
+}
+
+function imprimirQR(){
+  const t = window._qrCurrentTicket || {};
+  const titulo = t.titulo  || currentBook?.title || '?';
+  const alumno = t.alumno  || ST.studentName || '—';
+  const curso  = t.curso   || currentGrade || '—';
+  const fecha  = t.fecha   || new Date().toLocaleDateString('es-ES');
+  const hora   = t.hora    || '';
+  const id     = t.id      || '';
+
+  // Capturar el canvas QR como dataURL
+  const cvEl = document.querySelector('#qrCanvas canvas');
+  const qrSrc = cvEl ? cvEl.toDataURL('image/png') : '';
+
+  const win = window.open('','_blank','width=460,height=620');
+  if(!win) return;
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <title>Ticket Préstamo</title>
+    <style>
+      *{margin:0;padding:0;box-sizing:border-box;}
+      body{font-family:Arial,sans-serif;background:#fff;color:#111;padding:24px;max-width:400px;}
+      .header{text-align:center;border-bottom:3px solid #111;padding-bottom:14px;margin-bottom:16px;}
+      .logo{font-size:1.5rem;font-weight:900;letter-spacing:.08em;color:#E50914;}
+      .school{font-size:.75rem;color:#555;margin-top:3px;font-weight:700;letter-spacing:.04em;}
+      .ticket-title{font-size:.78rem;font-weight:900;letter-spacing:.18em;text-transform:uppercase;
+        color:#fff;background:#111;padding:5px 12px;display:inline-block;border-radius:3px;margin:10px 0 16px;}
+      .qr-wrap{text-align:center;margin:0 auto 16px;}
+      .qr-wrap img{width:180px;height:180px;image-rendering:pixelated;}
+      .info{border:1.5px solid #ddd;border-radius:8px;padding:12px 16px;font-size:.82rem;line-height:2;}
+      .info .label{font-weight:900;color:#555;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;}
+      .info .val{font-weight:700;color:#111;}
+      .id{font-family:monospace;font-size:.7rem;color:#888;text-align:center;margin-top:12px;}
+      .hint{font-size:.7rem;color:#888;text-align:center;margin-top:14px;
+        padding-top:12px;border-top:1px dashed #ccc;line-height:1.6;}
+      @media print{body{padding:10px;}}
+    </style></head><body>
+    <div class="header">
+      <div class="logo">BIBLIOFLIX</div>
+      <div class="school">📚 CEIP San José Obrero · Cuevas del Becerro</div>
+    </div>
+    <div style="text-align:center">
+      <span class="ticket-title">Solicitud de Préstamo</span>
+    </div>
+    <div class="qr-wrap">
+      ${qrSrc
+        ? `<img src="${qrSrc}" alt="QR Ticket">`
+        : `<div style="width:180px;height:180px;border:2px dashed #ccc;margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:.7rem;color:#aaa;">Sin QR</div>`}
+    </div>
+    <div class="info">
+      <div><span class="label">📖 Libro</span><br><span class="val">${titulo}</span></div>
+      <div style="margin-top:8px"><span class="label">👤 Alumno/a</span><br><span class="val">${alumno}</span></div>
+      <div style="margin-top:8px"><span class="label">🏫 Curso</span><br><span class="val">${curso}</span></div>
+      <div style="margin-top:8px"><span class="label">📅 Fecha y hora</span><br><span class="val">${fecha} · ${hora}</span></div>
+    </div>
+    <div class="id">ID: ${id}</div>
+    <div class="hint">El maestro escaneará el QR con su dispositivo<br>para registrar el préstamo en Biblioflix</div>
+    <script>window.onload=()=>setTimeout(()=>window.print(),400);<\/script>
+    </body></html>`);
+  win.document.close();
+}
+
+document.addEventListener('keydown', e => {
+  if(document.getElementById('qrModal')?.classList.contains('on') && e.key === 'Escape') cerrarQR();
+});
+
+/* ═══════════════════════════════════════════════════════
+   GESTIÓN DE SESIÓN — privacidad en dispositivos compartidos
+════════════════════════════════════════════════════════ */
+
+// 1. Datos volátiles de sesión (se pierden al cerrar el navegador)
+//    El nombre del alumno y el XP de sesión usan sessionStorage
+//    El progreso/historial sí persiste en localStorage (es pedagógico)
+
+function _getSessionName(){
+  return sessionStorage.getItem('bflix_session_name') || ST.studentName || '';
+}
+function _setSessionName(name){
+  sessionStorage.setItem('bflix_session_name', name);
+  // También en ST para compatibilidad con el panel admin
+  ST.studentName = name;
+  saveState();
+}
+function _clearSession(){
+  sessionStorage.removeItem('bflix_session_name');
+  ST.studentName = '';
+  saveState();
+  updateStudentBadge();
+}
+
+// 2. Cerrar sesión — limpia nombre y vuelve a perfiles
+function cerrarSesion(){
+  _clearSession();
+  // Parar TTS si está activo
+  if(ttsState.active) ttsStop();
+  // Cerrar reader si está abierto
+  if(document.getElementById('reader')?.classList.contains('on')){
+    showScreen('dash');
+  }
+  showScreen('profiles');
+}
+
+// 3. Al entrar en un curso, limpiar sesión anterior
+//    para que el siguiente alumno no herede el nombre del anterior
+const _origGo_session = window.go;
+window.go = function(grade){
+  // Limpiar nombre de sesión anterior antes de pedir el nuevo
+  sessionStorage.removeItem('bflix_session_name');
+  _origGo_session(grade);
+};
+
+// 4. Mostrar nombre desde sessionStorage al cargar
+window.addEventListener('load', ()=>{
+  const sesName = sessionStorage.getItem('bflix_session_name');
+  if(sesName && !ST.studentName){
+    ST.studentName = sesName;
+  }
+  updateStudentBadge();
+});
+
+// 5. Auto-reset por inactividad (5 minutos)
+let _inactivityTimer = null;
+const INACTIVITY_MS = 5 * 60 * 1000; // 5 minutos
+
+function _resetInactivity(){
+  clearTimeout(_inactivityTimer);
+  _inactivityTimer = setTimeout(()=>{
+    // Solo resetear si estamos en el dashboard (no en el lector)
+    if(document.getElementById('dash')?.classList.contains('on')){
+      _clearSession();
+      showScreen('profiles');
+    }
+  }, INACTIVITY_MS);
+}
+
+// Escuchar cualquier interacción del usuario
+['click','touchstart','keydown','scroll'].forEach(ev=>{
+  document.addEventListener(ev, _resetInactivity, {passive:true});
+});
+_resetInactivity(); // Iniciar contador al cargar
+
+// 6. Añadir botón "Cerrar sesión" en el nav del dashboard
+//    Se inyecta después de que el DOM esté listo
+window.addEventListener('DOMContentLoaded', ()=>{
+  const navRight = document.querySelector('#dash .nav-right');
+  if(navRight && !document.getElementById('cerrarSesionBtn')){
+    const btn = document.createElement('button');
+    btn.id = 'cerrarSesionBtn';
+    btn.title = 'Cerrar sesión y volver al inicio';
+    btn.textContent = '⏏ Salir';
+    btn.style.cssText = 'background:rgba(229,9,20,.15);border:1px solid rgba(229,9,20,.3);color:#ff8080;'+
+      'padding:5px 13px;border-radius:20px;font-family:var(--B);font-weight:800;font-size:.75rem;'+
+      'cursor:pointer;transition:background .2s;white-space:nowrap;';
+    btn.onmouseover = ()=> btn.style.background='rgba(229,9,20,.3)';
+    btn.onmouseout  = ()=> btn.style.background='rgba(229,9,20,.15)';
+    btn.onclick = ()=>{
+      if(confirm('¿Seguro que quieres cerrar la sesión?\nVolverás a la pantalla de inicio.')) cerrarSesion();
+    };
+    // Insertar antes del badge de nombre
+    const badge = document.getElementById('studentNameBadge');
+    navRight.insertBefore(btn, badge || navRight.firstChild);
+  }
+});
 
 /* ═══════════════════════════════════════════════════════
    T3 — ALTO CONTRASTE WCAG
@@ -4834,6 +5784,212 @@ function saveRetoMes(){
   setupRetoMes(currentGrade);
 }
 
+
+/* ═══════════════════════════════════════════════════════
+   ADMIN — PANEL PRÉSTAMOS QR + FIREBASE SYNC
+════════════════════════════════════════════════════════ */
+
+// Claves admin que deben replicarse en Firebase
+const ADMIN_FIREBASE_KEYS = ['teacherRec','teacherRecs','novedades','itinerario','retoMes','adminPinned'];
+
+/**
+ * Guarda la config admin en Firebase (se llama desde saveState cuando el admin está activo).
+ */
+function fbSyncAdminIfNeeded(){
+  if(typeof window._fbSaveAdmin !== 'function') return;
+  const adminSnap = {};
+  ADMIN_FIREBASE_KEYS.forEach(k=>{ if(ST[k]!==undefined) adminSnap[k]=ST[k]; });
+  window._fbSaveAdmin(adminSnap);
+}
+
+/**
+ * Botón manual "Sincronizar a Firebase" en el panel de préstamos.
+ */
+function fbSyncAllAdminNow(){
+  const status = document.getElementById('fbSyncStatus');
+  if(status) status.innerHTML = '<span style="color:#60a5fa">🔄 Sincronizando…</span>';
+  if(typeof window._fbSaveAdmin !== 'function'){
+    if(status) status.innerHTML = '<span style="color:#f59e0b">⚠️ Firebase no disponible. Comprueba las credenciales.</span>';
+    return;
+  }
+  const adminSnap = {};
+  ADMIN_FIREBASE_KEYS.forEach(k=>{ if(ST[k]!==undefined) adminSnap[k]=ST[k]; });
+  window._fbSaveAdmin(adminSnap).then(()=>{
+    if(status) status.innerHTML = '<span style="color:#22c55e">✅ Config admin sincronizada en Firebase (' + new Date().toLocaleTimeString('es-ES') + ')</span>';
+  }).catch(()=>{
+    if(status) status.innerHTML = '<span style="color:#ef4444">❌ Error al sincronizar. Comprueba la conexión.</span>';
+  });
+}
+
+/**
+ * Parche en saveState: si el admin está logado, sincroniza con Firebase automáticamente.
+ */
+const _origSaveStateAdmin = window.saveState || saveState;
+window.saveState = function(){
+  _origSaveStateAdmin();
+  // Detectar si el admin está activo (pantalla admin visible)
+  const adminVisible = document.getElementById('admin')?.classList.contains('on');
+  if(adminVisible) fbSyncAdminIfNeeded();
+};
+
+/* ── PANEL PRÉSTAMOS ── */
+async function buildAdminPrestamos(){
+  const list = document.getElementById('prestamosList');
+  if(!list) return;
+
+  list.innerHTML = '<div style="color:#555;font-size:.83rem">⏳ Cargando préstamos desde Firebase…</div>';
+
+  // 1. Firebase
+  let loans = null;
+  if(typeof window._fbLoadLoans === 'function'){
+    loans = await window._fbLoadLoans();
+  }
+
+  // 2. También préstamos guardados en localStorage (offline)
+  const localLoans = ST.localLoans || {};
+
+  // Combinar
+  const allLoans = Object.assign({}, localLoans, loans || {});
+  const entries = Object.entries(allLoans)
+    .map(([k,v])=>({key:k,...v}))
+    .sort((a,b)=>(b._created||'').localeCompare(a._created||''));
+
+  if(!entries.length){
+    list.innerHTML = `
+      <div style="text-align:center;padding:40px 0;color:var(--g);">
+        <div style="font-size:2.5rem;margin-bottom:12px">📭</div>
+        <div style="font-weight:900;margin-bottom:6px">Sin solicitudes de préstamo</div>
+        <div style="font-size:.8rem">Aparecerán aquí cuando los alumnos generen un QR<br>pulsando "¡Quiero este libro!" al final de la lectura.</div>
+      </div>`;
+    return;
+  }
+
+  const statusColor = {
+    pendiente:  {bg:'rgba(245,158,11,.15)', border:'rgba(245,158,11,.4)', text:'#fbbf24', label:'⏳ Pendiente'},
+    entregado:  {bg:'rgba(34,197,94,.1)',   border:'rgba(34,197,94,.35)',  text:'#22c55e', label:'✅ Entregado'},
+    devuelto:   {bg:'rgba(96,165,250,.1)',  border:'rgba(96,165,250,.35)', text:'#60a5fa', label:'📥 Devuelto'},
+  };
+
+  list.innerHTML = `
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
+      <thead>
+        <tr style="color:var(--gold);border-bottom:2px solid #333;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;">
+          <th style="padding:8px 6px;text-align:left">Libro</th>
+          <th style="padding:8px 6px;text-align:left">Alumno</th>
+          <th style="padding:8px 6px;text-align:left">Curso</th>
+          <th style="padding:8px 6px;text-align:left">Fecha</th>
+          <th style="padding:8px 6px;text-align:left">Estado</th>
+          <th style="padding:8px 6px;text-align:left">Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries.map(l => {
+          const s = statusColor[l.status] || statusColor.pendiente;
+          return `<tr style="border-bottom:1px solid #1f1f1f;">
+            <td style="padding:9px 6px;font-weight:800;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.libro||'—'}</td>
+            <td style="padding:9px 6px;color:var(--g)">${l.alumno||'—'}</td>
+            <td style="padding:9px 6px;color:var(--g)">${l.curso||'—'}</td>
+            <td style="padding:9px 6px;color:#555;font-size:.75rem">${l.fecha||''} ${l.hora||''}</td>
+            <td style="padding:9px 6px">
+              <span style="background:${s.bg};border:1px solid ${s.border};color:${s.text};
+                padding:3px 9px;border-radius:20px;font-size:.72rem;font-weight:800;white-space:nowrap">
+                ${s.label}
+              </span>
+            </td>
+            <td style="padding:9px 6px;white-space:nowrap">
+              ${l.status!=='entregado'
+                ? `<button onclick="cambiarEstadoPrestamo('${l.key}','entregado')"
+                    style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;
+                    padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:800;margin-right:4px">
+                    ✅ Entregar</button>` : ''}
+              ${l.status==='entregado'
+                ? `<button onclick="cambiarEstadoPrestamo('${l.key}','devuelto')"
+                    style="background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.3);color:#60a5fa;
+                    padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:800;">
+                    📥 Devuelto</button>` : ''}
+              <button onclick="borrarPrestamo('${l.key}')"
+                style="background:rgba(229,9,20,.08);border:1px solid rgba(229,9,20,.25);color:#ff8080;
+                padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:700;">
+                🗑</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table></div>
+    <div style="margin-top:10px;font-size:.75rem;color:#555">
+      Total: <b style="color:var(--g)">${entries.length}</b> solicitudes ·
+      Pendientes: <b style="color:#fbbf24">${entries.filter(l=>l.status==='pendiente').length}</b> ·
+      Entregados: <b style="color:#22c55e">${entries.filter(l=>l.status==='entregado').length}</b>
+    </div>`;
+}
+
+function cambiarEstadoPrestamo(key, nuevoEstado){
+  // Local
+  if(!ST.localLoans) ST.localLoans = {};
+  if(ST.localLoans[key]) ST.localLoans[key].status = nuevoEstado;
+  saveState();
+  // Firebase
+  if(typeof window._fbUpdateLoan === 'function') window._fbUpdateLoan(key, nuevoEstado);
+  buildAdminPrestamos();
+}
+
+function borrarPrestamo(key){
+  if(!confirm('¿Eliminar esta solicitud de préstamo?')) return;
+  if(ST.localLoans && ST.localLoans[key]) delete ST.localLoans[key];
+  saveState();
+  // Firebase: marcar como borrado
+  if(typeof window._fbUpdateLoan === 'function') window._fbUpdateLoan(key, 'borrado');
+  buildAdminPrestamos();
+}
+
+/* ── PANEL ESTADO FIREBASE ── */
+async function buildFbStatus(){
+  const panel = document.getElementById('fbStatusPanel');
+  if(!panel) return;
+
+  const fbReady = window._FB_READY;
+  if(!fbReady){
+    panel.innerHTML = `
+      <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:14px 18px;">
+        <div style="font-weight:900;color:#ef4444;margin-bottom:6px">❌ Firebase no configurado</div>
+        <div style="font-size:.8rem;color:var(--g);line-height:1.7">
+          Las credenciales de Firebase no se han introducido. Los cambios del maestro <b style="color:#fff">solo se guardan en este dispositivo</b>.<br>
+          Edita el bloque <code style="color:var(--gold)">FIREBASE_CONFIG</code> en el HTML con las credenciales de tu proyecto.
+        </div>
+      </div>`;
+    return;
+  }
+
+  panel.innerHTML = '<div style="color:#60a5fa;font-size:.82rem">🔄 Comprobando Firebase…</div>';
+
+  let nAlumnos = 0, lastUpdate = '—';
+  try {
+    const allUsers = await window._fbLoadAllStats();
+    if(allUsers) nAlumnos = Object.keys(allUsers).length;
+    const adminData = await window._fbLoadAdmin();
+    if(adminData?._lastUpdated) lastUpdate = new Date(adminData._lastUpdated).toLocaleString('es-ES');
+  } catch(e){}
+
+  panel.innerHTML = `
+    <div style="background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.25);border-radius:10px;padding:14px 18px;">
+      <div style="font-weight:900;color:#34d399;margin-bottom:10px">✅ Firebase conectado — ${window.FIREBASE_CONFIG?.projectId||''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="background:#252525;border-radius:8px;padding:12px 16px;text-align:center;">
+          <div style="font-size:1.5rem;font-weight:900;color:#34d399">${nAlumnos}</div>
+          <div style="font-size:.72rem;color:var(--g);margin-top:2px">Alumnos en la BD</div>
+        </div>
+        <div style="background:#252525;border-radius:8px;padding:12px 16px;text-align:center;">
+          <div style="font-size:.82rem;font-weight:900;color:#60a5fa">${lastUpdate}</div>
+          <div style="font-size:.72rem;color:var(--g);margin-top:2px">Última config admin</div>
+        </div>
+      </div>
+      <div style="margin-top:10px;font-size:.78rem;color:var(--g);line-height:1.6">
+        📡 Los cambios que hagas en <b style="color:#fff">Recomendaciones, Novedades, Itinerario y Reto del mes</b>
+        se sincronizan en la nube. Los alumnos los verán en su próxima sesión desde cualquier dispositivo.
+      </div>
+    </div>`;
+}
 
 /* ═══════════════════════════════════════════════════════
    HALLAZGO 2 — Lazy loading de portadas con IntersectionObserver
@@ -5215,6 +6371,294 @@ function borrarTodosDatos(){
   setTimeout(() => location.reload(), 1500);
 }
 
+/* ═══════════════════════════════════════════════════════
+   CATÁLOGO DINÁMICO — añadir libros desde admin
+   Los libros se guardan en Firebase /catalog y se
+   inyectan en el array BOOKS en tiempo real mediante
+   onValue, visible en TODOS los dispositivos al instante.
+════════════════════════════════════════════════════════ */
+
+// ID base para libros de Firebase (comienza en 90000 para no colisionar)
+const FB_BOOK_ID_BASE = 90000;
+
+/**
+ * Convierte los datos de Firebase (/catalog) en objetos BOOK
+ * y los sincroniza con el array BOOKS global.
+ * Llamado cada vez que Firebase emite un cambio (onValue).
+ */
+window._syncFirebaseCatalog = function(data){
+  // Eliminar libros que vinieron de Firebase en una carga anterior
+  for(let i = BOOKS.length - 1; i >= 0; i--){
+    if(BOOKS[i]._fromFirebase) BOOKS.splice(i, 1);
+  }
+
+  if(!data || typeof data !== 'object') return;
+
+  const entries = Object.entries(data);
+  let added = 0;
+
+  entries.forEach(([key, bData], idx) => {
+    if(!bData || !bData.titulo || bData._deleted) return;
+
+    // Generar ID numérico único y estable a partir del índice
+    const numId = FB_BOOK_ID_BASE + idx + 1;
+
+    // Generar 3 capítulos de presentación automáticos
+    const syn  = bData.sinopsis || 'Libro disponible en la biblioteca del cole.';
+    const content = [
+      [
+        'Capítulo I', 'Presentación', bData.emoji || '📚',
+        syn + '\n\nEste libro te espera en la biblioteca del CEIP San José Obrero.',
+        { q: '¿Cuál es el tema principal de «' + bData.titulo.slice(0,35) + '»?',
+          opts: [syn.slice(0,60) + (syn.length>60?'…':''), 'Un viaje espacial sin ninguna complicación.', 'Una clase de matemáticas muy aburrida.'],
+          ok: 0 }
+      ],
+      [
+        'Capítulo II', 'Para saber más', '📖',
+        '¿Quieres conocer la historia completa?\n\n📚 Pide prestado «' + bData.titulo + '» en la biblioteca del cole y sumérgete en su lectura.',
+        null
+      ],
+      [
+        'Capítulo III', '¡Pide el libro!', '🏫',
+        '📚 «' + bData.titulo + '» de ' + (bData.autor || '—') + ' está disponible en la Biblioteca Escolar del CEIP San José Obrero.\n\nGenera un código QR para solicitar el préstamo.',
+        null
+      ]
+    ];
+
+    const bookObj = mkB(
+      numId,
+      bData.titulo,
+      bData.autor || 'Desconocido',
+      bData.emoji || '📚',
+      bData.cat || 'segundo',
+      bData.badge || null,
+      bData.genero || 'Cuento',
+      bData.editorial || 'SM',
+      bData.isbn || null,
+      bData.c1 || '#1a0830',
+      bData.c2 || '#4c1d95',
+      syn,
+      content
+    );
+    bookObj._fromFirebase = true;
+    bookObj._fbKey        = key;
+    BOOKS.push(bookObj);
+    added++;
+  });
+
+  console.log(`[Biblioflix] _syncFirebaseCatalog: ${added} libros de Firebase añadidos ✅`);
+
+  // Refrescar catálogo si el dashboard está activo
+  if(currentGrade){
+    const filtered = document.getElementById('searchBox')?.value.trim()
+      ? BOOKS.filter(b => b.title.toLowerCase().includes(document.getElementById('searchBox').value.toLowerCase()))
+      : null;
+    buildCatalog(filtered || BOOKS, currentGrade);
+  }
+
+  // Refrescar tabla admin si estamos en la pestaña de libros
+  if(document.getElementById('ap-books')?.classList.contains('on')){
+    buildAdminTable(BOOKS, document.getElementById('adminSearch')?.value || '');
+  }
+};
+
+// Si el listener se disparó antes de que _syncFirebaseCatalog existiera
+if(window._pendingCatalogData !== undefined){
+  window._syncFirebaseCatalog(window._pendingCatalogData);
+  delete window._pendingCatalogData;
+}
+
+/* ── Color selector ── */
+function selectCatalogColor(el){
+  document.querySelectorAll('.cv-color-opt').forEach(o => o.style.border = '2px solid transparent');
+  el.style.border = '2px solid #fff';
+  document.getElementById('cf-c1').value = el.dataset.c1;
+  document.getElementById('cf-c2').value = el.dataset.c2;
+  document.getElementById('cf-colorPreview').style.background =
+    `linear-gradient(135deg,${el.dataset.c1},${el.dataset.c2})`;
+}
+
+/* ── Publicar libro en Firebase ── */
+async function addLibroAlCatalogo(){
+  const titulo    = document.getElementById('cf-titulo')?.value.trim();
+  const autor     = document.getElementById('cf-autor')?.value.trim();
+  const sinopsis  = document.getElementById('cf-synopsis')?.value.trim();
+  const cat       = document.getElementById('cf-cat')?.value;
+  const status    = document.getElementById('cfStatus');
+
+  if(!titulo || !autor){
+    status.innerHTML = '<span style="color:#ff8080">⚠️ Título y autor son obligatorios.</span>';
+    return;
+  }
+  if(!sinopsis){
+    status.innerHTML = '<span style="color:#ff8080">⚠️ La sinopsis es obligatoria.</span>';
+    return;
+  }
+  if(!cat){
+    status.innerHTML = '<span style="color:#ff8080">⚠️ Selecciona el nivel / curso.</span>';
+    return;
+  }
+  if(typeof window._fbSaveCatalogBook !== 'function'){
+    status.innerHTML = '<span style="color:#f59e0b">⚠️ Firebase no disponible. Configura las credenciales primero.</span>';
+    return;
+  }
+
+  const btn = document.getElementById('btnAddCatalogo');
+  btn.disabled = true;
+  btn.textContent = '⏳ Publicando…';
+  status.innerHTML = '<span style="color:#60a5fa">🔄 Guardando en Firebase…</span>';
+
+  try {
+    const bookData = {
+      titulo,
+      autor,
+      sinopsis,
+      cat,
+      emoji:     document.getElementById('cf-emoji')?.value.trim()    || '📚',
+      genero:    document.getElementById('cf-genero')?.value          || 'Cuento',
+      editorial: document.getElementById('cf-editorial')?.value.trim()|| 'SM',
+      badge:     document.getElementById('cf-badge')?.value.trim()    || null,
+      isbn:      document.getElementById('cf-isbn')?.value.trim()     || null,
+      c1:        document.getElementById('cf-c1')?.value              || '#1a0830',
+      c2:        document.getElementById('cf-c2')?.value              || '#4c1d95',
+      _addedBy:  'admin',
+      _addedDate: new Date().toLocaleDateString('es-ES'),
+    };
+
+    const key = await window._fbSaveCatalogBook(bookData);
+    status.innerHTML = `<span style="color:#22c55e">✅ «${titulo}» publicado correctamente. Ya aparece en todos los dispositivos.</span>`;
+    resetCatalogForm();
+    buildAdminCatalogo();
+    confetti();
+    _adminToast('📚 «' + titulo.slice(0,30) + '» añadido al catálogo en Firebase');
+  } catch(e){
+    status.innerHTML = `<span style="color:#ff8080">❌ Error al guardar: ${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⚡ Publicar en Firebase';
+  }
+}
+
+/* ── Limpiar formulario ── */
+function resetCatalogForm(){
+  ['cf-titulo','cf-autor','cf-emoji','cf-isbn','cf-editorial','cf-badge','cf-synopsis']
+    .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  const catEl = document.getElementById('cf-cat');
+  if(catEl) catEl.value = '';
+  const genEl = document.getElementById('cf-genero');
+  if(genEl) genEl.value = 'Cuento';
+  document.getElementById('cf-c1').value = '#1a0830';
+  document.getElementById('cf-c2').value = '#4c1d95';
+  document.getElementById('cf-colorPreview').style.background = 'linear-gradient(135deg,#1a0830,#4c1d95)';
+  document.querySelectorAll('.cv-color-opt').forEach(o => o.style.border = '2px solid transparent');
+  document.getElementById('cfStatus').innerHTML = '';
+}
+
+/* ── Eliminar libro de Firebase ── */
+async function eliminarLibroCatalogo(key, titulo){
+  if(!confirm(`¿Eliminar «${titulo}» del catálogo Firebase?\nSe eliminará de todos los dispositivos.`)) return;
+  if(typeof window._fbDeleteCatalogBook !== 'function'){
+    _adminToast('⚠️ Firebase no disponible');
+    return;
+  }
+  try {
+    await window._fbDeleteCatalogBook(key);
+    _adminToast('🗑 «' + titulo.slice(0,30) + '» eliminado del catálogo');
+    buildAdminCatalogo();
+  } catch(e){
+    alert('Error al eliminar: ' + e.message);
+  }
+}
+
+/* ── Construir panel de catálogo admin ── */
+async function buildAdminCatalogo(){
+  // Actualizar badge de estado Firebase
+  const badge = document.getElementById('catalogFbBadge');
+  if(badge){
+    const ready = window._FB_READY;
+    badge.textContent = ready ? '🟢 Firebase activo' : '🔴 Sin Firebase';
+    badge.style.background = ready ? 'rgba(52,211,153,.12)' : 'rgba(239,68,68,.1)';
+    badge.style.color = ready ? '#34d399' : '#ef4444';
+    badge.style.borderColor = ready ? 'rgba(52,211,153,.3)' : 'rgba(239,68,68,.3)';
+  }
+
+  const list = document.getElementById('catalogFirebaseList');
+  if(!list) return;
+
+  if(!window._FB_READY){
+    list.innerHTML = `
+      <div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:18px 22px;">
+        <div style="font-weight:900;color:#ef4444;margin-bottom:6px;">❌ Firebase no configurado</div>
+        <div style="font-size:.8rem;color:var(--g);line-height:1.7;">
+          Para usar esta función necesitas las credenciales de Firebase.<br>
+          Edita el bloque <code style="color:var(--gold)">FIREBASE_CONFIG</code> en el HTML con tus datos de Firebase.
+        </div>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = '<div style="color:#60a5fa;font-size:.83rem;padding:12px 0;">🔄 Cargando desde Firebase…</div>';
+
+  try {
+    const catalog = await window._fbLoadCatalog();
+    const entries = Object.entries(catalog || {}).filter(([,v]) => v && v.titulo && !v._deleted);
+
+    if(!entries.length){
+      list.innerHTML = `
+        <div style="text-align:center;padding:32px 0;color:var(--g);">
+          <div style="font-size:2.5rem;margin-bottom:10px">📭</div>
+          <div style="font-weight:900;margin-bottom:4px">Sin libros publicados todavía</div>
+          <div style="font-size:.8rem;">Usa el formulario de arriba para añadir el primer libro.</div>
+        </div>`;
+      return;
+    }
+
+    list.innerHTML = entries.map(([key, b]) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#252525;border-radius:10px;margin-bottom:8px;flex-wrap:wrap;border:1px solid #333;">
+        <!-- Portada mini -->
+        <div style="width:44px;height:64px;border-radius:4px 8px 8px 4px;flex-shrink:0;
+          background:linear-gradient(135deg,${b.c1||'#1a0830'},${b.c2||'#4c1d95'});
+          display:flex;align-items:center;justify-content:center;font-size:1.4rem;
+          box-shadow:2px 3px 10px rgba(0,0,0,.5);">${b.emoji||'📚'}</div>
+        <!-- Datos -->
+        <div style="flex:1;min-width:140px;">
+          <div style="font-weight:900;font-size:.88rem;">${b.titulo}${b.badge?`<span style="margin-left:6px;background:var(--red);font-size:.58rem;font-weight:900;padding:2px 6px;border-radius:3px;">${b.badge}</span>`:''}</div>
+          <div style="font-size:.76rem;color:var(--g);margin-top:2px;">${b.autor} · ${b.genero} · ${_catLabel(b.cat)}</div>
+          ${b.isbn?`<div style="font-size:.7rem;color:#555;margin-top:1px;">ISBN: ${b.isbn}</div>`:''}
+          <div style="font-size:.68rem;color:#444;margin-top:3px;">🔑 ${key} · 📅 ${b._addedDate||'—'}</div>
+        </div>
+        <!-- Acciones -->
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <button onclick="openModal(BOOKS.find(x=>x._fbKey==='${key}')?.id)" title="Vista previa"
+            style="background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.3);color:#60a5fa;
+            padding:6px 12px;border-radius:7px;font-size:.75rem;font-weight:700;cursor:pointer;">
+            👁 Ver
+          </button>
+          <button onclick="eliminarLibroCatalogo('${key}','${b.titulo.replace(/'/g,"\\'")}')"
+            style="background:rgba(229,9,20,.1);border:1px solid rgba(229,9,20,.25);color:#ff8080;
+            padding:6px 12px;border-radius:7px;font-size:.75rem;cursor:pointer;">
+            🗑 Eliminar
+          </button>
+        </div>
+      </div>`).join('') +
+      `<div style="margin-top:10px;font-size:.75rem;color:#555;">
+        Total: <b style="color:var(--g)">${entries.length}</b> libro${entries.length===1?'':'s'} en el catálogo Firebase ·
+        <span style="color:#34d399">Sincronizado en tiempo real ⚡</span>
+      </div>`;
+  } catch(e){
+    list.innerHTML = `<div style="color:#ff8080;font-size:.83rem;">❌ Error al cargar: ${e.message}</div>`;
+  }
+}
+
+function _catLabel(cat){
+  const map = {
+    primero:'Infantil / 1º', segundo:'2º Primaria', tercero:'3º Primaria',
+    cuarto:'4º Primaria', quinto:'5º Primaria', sexto:'6º Primaria',
+    eso:'ESO', novedades:'🆕 Novedades'
+  };
+  return map[cat] || cat || '—';
+}
+
 </script>
 <!-- ═══════════ ITINERARIO LECTOR ═══════════ -->
 <div class="itin-modal" id="itinModal">
@@ -5268,6 +6712,23 @@ function borrarTodosDatos(){
   </div>
 </div>
 
+
+<!-- ═══════════ MODAL QR "QUIERO ESTE LIBRO" ═══════════ -->
+<div class="qr-modal" id="qrModal">
+  <div class="qr-box">
+    <div class="qr-titulo">📚 Solicitud de préstamo</div>
+    <div class="qr-libro" id="qrTitulo">—</div>
+    <div class="qr-alumno" id="qrAlumno">—</div>
+    <div id="qrCanvas"></div>
+    <div class="qr-hint">
+      Este código QR contiene los datos del préstamo.<br>
+      El maestro lo escaneará con su dispositivo para registrarlo.<br>
+      <span style="color:#22c55e;font-weight:800">✅ Funciona sin internet</span>
+    </div>
+    <button class="qr-print" onclick="imprimirQR()">🖨️ Imprimir ticket / Guardar imagen</button>
+    <button class="qr-close" onclick="cerrarQR()">Cerrar</button>
+  </div>
+</div>
 
 <div class="student-modal" id="studentModal">
   <div class="student-box">
