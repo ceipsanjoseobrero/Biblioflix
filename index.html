@@ -611,6 +611,26 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
   };
 
   // ── STATS GLOBALES: leer todos los alumnos desde /users ──
+  // ── SAVE STUDENT SESSION → /sessions/ ───────────────
+  window._fbSaveSession = function(sessionData){
+    if(!db) return;
+    const key = 'ses_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,5);
+    set(ref(db, 'sessions/' + key), { ...sessionData, _created: new Date().toISOString() })
+      .catch(e => console.warn('[Biblioflix] Session save error:', e.message));
+  };
+
+  // ── REAL-TIME LISTENER on /sessions ─────────────────
+  if(FB_READY && db){
+    onValue(ref(db, 'sessions'), () => {
+      setTimeout(() => {
+        if(typeof renderStudentSessions === 'function' &&
+           document.getElementById('ap-students')?.classList.contains('on')){
+          renderStudentSessions();
+        }
+      }, 200);
+    });
+  }
+
   window._fbLoadAllStats = async function(){
     if(!db) return null;
     try {
@@ -696,22 +716,19 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
   // Notifica al panel admin cada vez que llega un préstamo nuevo
   if(FB_READY && db){
     onValue(ref(db, 'loans'), (snap) => {
-      try {
-        const fbLoans = snap.exists() ? snap.val() : {};
-
-        // Calcular pendientes desde Firebase directamente (no depende de window.ST)
-        const localLoans = (window.ST && window.ST.localLoans) ? window.ST.localLoans : {};
-        const allLoans   = Object.assign({}, localLoans, fbLoans);
-        const pendientes = Object.values(allLoans).filter(v => v && v.status === 'pendiente').length;
-
-        // Actualizar badge de la pestaña (siempre, esté visible o no el panel admin)
-        if(typeof _updateLoansBadge === 'function') _updateLoansBadge(pendientes);
-
-        // Si el panel de préstamos está activo en este momento, refrescarlo
-        if(document.getElementById('ap-prestamos')?.classList.contains('on')){
-          if(typeof buildAdminPrestamos === 'function') buildAdminPrestamos();
-        }
-      } catch(e){ console.warn('[Biblioflix] loans onValue error:', e.message); }
+      // Diferir para asegurarse de que las funciones del script principal están definidas
+      setTimeout(() => {
+        try {
+          const fbLoans = snap.exists() ? snap.val() : {};
+          const localLoans = (window.ST && window.ST.localLoans) ? window.ST.localLoans : {};
+          const allLoans   = Object.assign({}, localLoans, fbLoans);
+          const pendientes = Object.values(allLoans).filter(v => v && v.status === 'pendiente').length;
+          if(typeof _updateLoansBadge === 'function') _updateLoansBadge(pendientes);
+          if(document.getElementById('ap-prestamos')?.classList.contains('on')){
+            if(typeof buildAdminPrestamos === 'function') buildAdminPrestamos();
+          }
+        } catch(e){ console.warn('[Biblioflix] loans onValue error:', e.message); }
+      }, 300);
     }, (err) => { console.warn('[Biblioflix] loans listener error:', err.message); });
   }
 
@@ -4507,22 +4524,48 @@ async function testSheetsUrl(){
 /* ═══════════════════════════════════════════════════════
    SESIONES DE ALUMNOS — panel admin
 ════════════════════════════════════════════════════════ */
-function renderStudentSessions(){
+async function renderStudentSessions(){
   const panel = document.getElementById('adminStudentSessions');
   if(!panel) return;
-  const sessions = (ST.studentSessions||[]).slice().reverse().slice(0,100);
-  if(!sessions.length){
+  panel.innerHTML = '<p style="color:#555;font-size:.82rem;padding:8px 0">🔄 Cargando sesiones…</p>';
+
+  // Combinar sesiones locales + Firebase
+  let allSessions = [...(ST.studentSessions || [])];
+  if(typeof window._fbLoadSessions === 'function'){
+    try {
+      const fbSessions = await window._fbLoadSessions();
+      if(fbSessions){
+        const fbArr = Object.values(fbSessions).filter(v => v && v.name);
+        // Fusionar evitando duplicados (mismo nombre + fecha + hora)
+        fbArr.forEach(fs => {
+          const exists = allSessions.some(s => s.name === fs.name && s.date === fs.date && s.time === fs.time);
+          if(!exists) allSessions.push(fs);
+        });
+      }
+    } catch(e){}
+  }
+
+  // Ordenar por fecha+hora descendente
+  allSessions.sort((a,b) => {
+    const ta = (a._created || a.date + ' ' + (a.time||'')).replace(/\//g,'-');
+    const tb = (b._created || b.date + ' ' + (b.time||'')).replace(/\//g,'-');
+    return tb.localeCompare(ta);
+  });
+  allSessions = allSessions.slice(0, 200);
+
+  if(!allSessions.length){
     panel.innerHTML = '<p style="color:#555;font-size:.85rem;padding:16px 0">Ningún alumno ha iniciado sesión todavía.</p>';
     return;
   }
-  const rows = sessions.map(s=>`
+  const rows = allSessions.map(s=>`
     <tr style="border-bottom:1px solid #222;">
       <td style="padding:8px;font-weight:800">${s.name||'—'}</td>
-      <td style="padding:8px;color:var(--g)">${s.grade}</td>
-      <td style="padding:8px;color:var(--g)">${s.date}</td>
-      <td style="padding:8px;color:var(--g)">${s.time}</td>
+      <td style="padding:8px;color:var(--g)">${s.grade||'—'}</td>
+      <td style="padding:8px;color:var(--g)">${s.date||'—'}</td>
+      <td style="padding:8px;color:var(--g)">${s.time||'—'}</td>
     </tr>`).join('');
   panel.innerHTML = `
+    <div style="font-size:.72rem;color:#34d399;margin-bottom:8px;">🌐 ${allSessions.length} sesiones (local + Firebase)</div>
     <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
       <thead><tr style="color:var(--gold);border-bottom:2px solid #333;">
@@ -4536,7 +4579,7 @@ function renderStudentSessions(){
     <button onclick="ST.studentSessions=[];saveState();renderStudentSessions()"
       style="margin-top:14px;background:rgba(229,9,20,.1);border:1px solid rgba(229,9,20,.3);
       color:#ff8080;padding:7px 18px;border-radius:8px;font-size:.75rem;font-weight:700;cursor:pointer">
-      🗑 Borrar historial de sesiones
+      🗑 Borrar historial local
     </button>`;
 }
 
@@ -4605,12 +4648,15 @@ window.confirmStudentLogin = async function() {
     ST.studentName = name;
     _setSessionName(name);
     if(!ST.studentSessions) ST.studentSessions = [];
-    ST.studentSessions.push({
+    const sessionEntry = {
       name, grade: pendingGrade,
       date: new Date().toLocaleDateString('es-ES'),
       time: new Date().toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'})
-    });
+    };
+    ST.studentSessions.push(sessionEntry);
     saveState();
+    // Guardar sesión en Firebase para que el admin la vea en tiempo real
+    if(typeof window._fbSaveSession === 'function') window._fbSaveSession(sessionEntry);
 
   } finally {
     if(enterBtn){ enterBtn.textContent = originalText; enterBtn.disabled = false; }
