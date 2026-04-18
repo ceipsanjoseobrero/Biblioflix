@@ -692,6 +692,29 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
     console.log('[Biblioflix] Libro eliminado de Firebase catalog:', key);
   };
 
+  // ── REAL-TIME LISTENER on /loans ─────────────────────
+  // Notifica al panel admin cada vez que llega un préstamo nuevo
+  if(FB_READY && db){
+    onValue(ref(db, 'loans'), (snap) => {
+      try {
+        const fbLoans = snap.exists() ? snap.val() : {};
+
+        // Calcular pendientes desde Firebase directamente (no depende de window.ST)
+        const localLoans = (window.ST && window.ST.localLoans) ? window.ST.localLoans : {};
+        const allLoans   = Object.assign({}, localLoans, fbLoans);
+        const pendientes = Object.values(allLoans).filter(v => v && v.status === 'pendiente').length;
+
+        // Actualizar badge de la pestaña (siempre, esté visible o no el panel admin)
+        if(typeof _updateLoansBadge === 'function') _updateLoansBadge(pendientes);
+
+        // Si el panel de préstamos está activo en este momento, refrescarlo
+        if(document.getElementById('ap-prestamos')?.classList.contains('on')){
+          if(typeof buildAdminPrestamos === 'function') buildAdminPrestamos();
+        }
+      } catch(e){ console.warn('[Biblioflix] loans onValue error:', e.message); }
+    }, (err) => { console.warn('[Biblioflix] loans listener error:', err.message); });
+  }
+
   // ── REAL-TIME LISTENER on /catalog ───────────────────
   // Se ejecuta inmediatamente y cada vez que cambia el catálogo
   if(FB_READY && db){
@@ -2934,6 +2957,9 @@ if(!ST.streak)       ST.streak={count:0,last:''};
 if(!ST.recReads)     ST.recReads=[];   // [{date, grade}]
 if(!ST.quizResults)  ST.quizResults={}; // {bookId_pageIdx: {correct,total}}
 
+// Exponer ST en window para que el módulo Firebase pueda acceder
+window.ST = ST;
+
 // Aplicar dark UI si estaba activo
 if(ST.settings.darkUI) document.body.classList.add('dark-ui');
 
@@ -3577,6 +3603,9 @@ function buildAdminPanel(){
   buildRecForm();
   renderStudentSessions();
   setTimeout(buildRetoAdmin,100);
+  // Badge de préstamos pendientes (datos locales inmediatos)
+  const pendientesLocal = Object.values(ST.localLoans || {}).filter(v => v && v.status === 'pendiente').length;
+  _updateLoansBadge(pendientesLocal);
   // Precargar badge de estado Firebase en la pestaña catálogo
   setTimeout(()=>{
     const badge = document.getElementById('catalogFbBadge');
@@ -5363,6 +5392,14 @@ function abrirQR(){
   // No llamar saveState aquí para no disparar sync admin innecesariamente
   try{ localStorage.setItem('biblioflix_v2', JSON.stringify(ST)); } catch(e){}
 
+  // ── Notificar al panel admin en tiempo real (mismo dispositivo) ──
+  const pendientesLocal = Object.values(ST.localLoans).filter(v => v && v.status === 'pendiente').length;
+  _updateLoansBadge(pendientesLocal);
+  // Si el panel de préstamos está abierto en este momento, refrescarlo
+  if(document.getElementById('ap-prestamos')?.classList.contains('on')){
+    setTimeout(buildAdminPrestamos, 400);
+  }
+
   document.getElementById('qrTitulo').textContent = titulo;
   document.getElementById('qrAlumno').textContent =
     `👤 ${alumno}  ·  📚 ${curso}  ·  📅 ${fecha} ${hora}`;
@@ -5832,6 +5869,17 @@ window.saveState = function(){
   if(adminVisible) fbSyncAdminIfNeeded();
 };
 
+/* ── Badge de préstamos pendientes en la pestaña ── */
+function _updateLoansBadge(n){
+  const btn = document.getElementById('atab-prestamos');
+  if(!btn) return;
+  if(n > 0){
+    btn.innerHTML = `📋 Préstamos <span style="background:var(--red);color:#fff;font-size:.65rem;font-weight:900;padding:2px 7px;border-radius:10px;margin-left:5px;vertical-align:middle;">${n}</span>`;
+  } else {
+    btn.textContent = '📋 Préstamos';
+  }
+}
+
 /* ── PANEL PRÉSTAMOS ── */
 async function buildAdminPrestamos(){
   const list = document.getElementById('prestamosList');
@@ -5929,6 +5977,9 @@ function cambiarEstadoPrestamo(key, nuevoEstado){
   if(!ST.localLoans) ST.localLoans = {};
   if(ST.localLoans[key]) ST.localLoans[key].status = nuevoEstado;
   saveState();
+  // Actualizar badge
+  const pendientes = Object.values(ST.localLoans).filter(v => v && v.status === 'pendiente').length;
+  _updateLoansBadge(pendientes);
   // Firebase
   if(typeof window._fbUpdateLoan === 'function') window._fbUpdateLoan(key, nuevoEstado);
   buildAdminPrestamos();
