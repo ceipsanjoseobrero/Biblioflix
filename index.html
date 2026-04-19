@@ -624,6 +624,14 @@ body.dark-ui .dark-toggle{background:rgba(255,255,255,.08);border-color:#666;col
       .catch(e=>{ console.error('[Biblioflix] ERROR guardando sesión:', e.message, e.code); window._fbLastWriteError = e.message; });
   };
 
+  window._fbLoadSessions = async function(){
+    if(!db) return null;
+    try {
+      const snap = await get(ref(db, 'sessions'));
+      return snap.exists() ? snap.val() : null;
+    } catch(e){ console.warn('[Biblioflix] Sessions load error:', e.message); return null; }
+  };
+
   // ── REAL-TIME LISTENER on /sessions ─────────────────
   if(FB_READY && db){
     onValue(ref(db, 'sessions'), () => {
