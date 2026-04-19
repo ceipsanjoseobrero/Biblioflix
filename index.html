@@ -4587,6 +4587,17 @@ async function testSheetsUrl(){
 /* ═══════════════════════════════════════════════════════
    SESIONES DE ALUMNOS — panel admin
 ════════════════════════════════════════════════════════ */
+async function borrarHistorialSesiones(){
+  if(!confirm('¿Borrar todo el historial de sesiones?')) return;
+  ST.studentSessions = [];
+  saveState();
+  // Borrar también en Firebase
+  if(window._fbRemove){
+    try { await window._fbRemove('sessions'); } catch(e){}
+  }
+  renderStudentSessions();
+}
+
 async function renderStudentSessions(){
   const panel = document.getElementById('adminStudentSessions');
   if(!panel) return;
@@ -4639,10 +4650,10 @@ async function renderStudentSessions(){
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <button onclick="ST.studentSessions=[];saveState();renderStudentSessions()"
+    <button onclick="borrarHistorialSesiones()"
       style="margin-top:14px;background:rgba(229,9,20,.1);border:1px solid rgba(229,9,20,.3);
       color:#ff8080;padding:7px 18px;border-radius:8px;font-size:.75rem;font-weight:700;cursor:pointer">
-      🗑 Borrar historial local
+      🗑 Borrar historial
     </button>`;
 }
 
